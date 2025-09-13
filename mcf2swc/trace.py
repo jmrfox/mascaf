@@ -1,16 +1,12 @@
 """
-Polyline-guided tracing to SWC.
-
-This module builds an SWC skeleton by tracing along user-provided polylines and
+This module builds SkeletonGraph by tracing along user-provided polylines and
 estimating radii from local mesh cross-sections perpendicular to polyline
 Tangents.
 
 High level:
 - Resample each input polyline at approximately fixed arc-length spacing.
-- For each resampled point P with local tangent t, intersect the mesh with the
-  plane passing through P with normal = t. Compose the resulting closed curves
-  into polygons-with-holes and select the polygon that contains P (in the local
-  plane) or, failing that, the one whose boundary is closest to P.
+- For each resampled point P with local tangent t, determine the tangent direction
+  from the 
 - Fit an equivalent circle radius from that polygon using one of:
     * equivalent_area:    r = sqrt(A / pi)
     * equivalent_perimeter: r = L / (2*pi), using the exterior boundary length
@@ -315,12 +311,8 @@ def build_traced_skeleton_graph(
             nid = alloc_id()
             j = {
                 "id": nid,
-                "z": float(P[2]),
                 "center": np.array(P, dtype=float),
                 "radius": float(radius),
-                "area": float(area),
-                "slice_index": int(pl_index),
-                "cross_section_index": int(i),
             }
             skel.add_junction(_junction_from_dict(j))
             # Attach source metadata on the graph node for diagnostics
@@ -342,37 +334,6 @@ def build_traced_skeleton_graph(
             prev_node = nid
 
     return skel
-
-
-def trace_polylines_to_swc(
-    mesh_or_manager: Union[trimesh.Trimesh, MeshManager],
-    polylines: PolylinesSkeleton,
-    swc_path: str,
-    *,
-    options: Optional[TraceOptions] = None,
-) -> None:
-    """
-    Convenience wrapper: build a traced SkeletonGraph from polylines+mesh and
-    export directly to an SWC file using the same cycle-breaking logic as
-    SkeletonGraph.to_swc.
-
-    Args:
-        mesh_or_manager: trimesh or MeshManager
-        polylines: polylines in the same coordinate frame
-        swc_path: destination filepath (.swc)
-        options: TraceOptions
-    """
-    if options is None:
-        options = TraceOptions()
-    skel = build_traced_skeleton_graph(mesh_or_manager, polylines, options=options)
-    skel.to_swc(
-        swc_path,
-        type_index=options.type_index,
-        annotate_cycles=bool(options.annotate_cycles),
-        cycle_mode=str(options.cycle_mode),
-        undo_transforms=options.undo_transforms,
-        force_single_tree=True,
-    )
 
 
 # ---------------------------------------------------------------------------

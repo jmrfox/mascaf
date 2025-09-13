@@ -7,8 +7,8 @@ into SWC skeletons.
 Public API:
 - MeshManager
 - PolylinesSkeleton
-- SkeletonGraph, Junction, CrossSection, Segment
-- TraceOptions, build_traced_skeleton_graph, trace_polylines_to_swc
+- SkeletonGraph, Junction
+- TraceOptions, build_traced_skeleton_graph
 """
 from __future__ import annotations
 
@@ -27,37 +27,24 @@ logging.getLogger(__name__).addHandler(logging.NullHandler())
 # Re-export primary classes and functions for convenient access at package level
 from .mesh import MeshManager  # noqa: E402
 from .polylines import PolylinesSkeleton  # noqa: E402
-from .skeleton import (  # noqa: E402
-    CrossSection,
-    Junction,
-    Segment,
-    SkeletonGraph,
-)
+from .skeleton import Junction, SkeletonGraph  # noqa: E402
 from .trace import (  # noqa: E402
     TraceOptions,
     build_traced_skeleton_graph,
-    trace_polylines_to_swc,
 )
-from .object3d import Object3D, Transform  # noqa: E402
 from .viz import show_swc  # noqa: E402
 
 __all__ = [
     "__version__",
-    # Core base
-    "Object3D",
-    "Transform",
     # Mesh and polylines
     "MeshManager",
     "PolylinesSkeleton",
-    # Skeleton graph and data models
+    # Skeleton types
     "SkeletonGraph",
     "Junction",
-    "CrossSection",
-    "Segment",
     # Tracing API
     "TraceOptions",
     "build_traced_skeleton_graph",
-    "trace_polylines_to_swc",
     # Visualization
     "show_swc",
 ]

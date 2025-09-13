@@ -19,22 +19,16 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 import numpy as np
 import trimesh
 
-from .object3d import Object3D
-
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
 
-class PolylinesSkeleton(Object3D):
+class PolylinesSkeleton:
     """
     Container for a set of 3D polylines with transform management.
 
     Attributes:
         polylines: List of (N_i, 3) arrays of float64
-        original_polylines: Deep copy of original coordinates for reset/undo
-        transform_stack: list of `Transform` records in applied order
-        M_world_from_local: Composite transform mapping local->world
-        M_local_from_world: Inverse composite mapping world->local (if invertible)
     """
 
     def __init__(self, polylines: Optional[Sequence[np.ndarray]] = None):
@@ -45,10 +39,6 @@ class PolylinesSkeleton(Object3D):
                 if arr.ndim != 2 or arr.shape[1] != 3:
                     raise ValueError("Each polyline must be an (N,3) array")
                 self.polylines.append(arr.copy())
-        self.original_polylines: List[np.ndarray] = [pl.copy() for pl in self.polylines]
-
-        # Initialize shared Object3D state
-        super().__init__()
 
     # ---------------------------------------------------------------------
     # IO
@@ -92,12 +82,8 @@ class PolylinesSkeleton(Object3D):
     # Basic properties
     # ---------------------------------------------------------------------
     def copy(self) -> "PolylinesSkeleton":
-        cps = PolylinesSkeleton([pl.copy() for pl in self.polylines])
-        cps.original_polylines = [pl.copy() for pl in self.original_polylines]
-        cps.transform_stack = list(self.transform_stack)
-        cps.M_world_from_local = self.M_world_from_local.copy()
-        cps.M_local_from_world = self.M_local_from_world.copy()
-        return cps
+        """Deep-copy the contained polylines and return a new instance."""
+        return PolylinesSkeleton([pl.copy() for pl in self.polylines])
 
     def as_arrays(self) -> List[np.ndarray]:
         return [pl.copy() for pl in self.polylines]
@@ -123,165 +109,6 @@ class PolylinesSkeleton(Object3D):
         all_pts = np.vstack(self.polylines)
         return all_pts.mean(axis=0)
 
-    # ---------------------------------------------------------------------
-    # Transform management (modeled after MeshManager)
-    # ---------------------------------------------------------------------
-    def _apply_transform_inplace(
-        self,
-        M: np.ndarray,
-    ) -> None:
-        """Apply the 4x4 transform to each polyline in-place."""
-        M = np.asarray(M, dtype=float)
-        if M.shape != (4, 4):
-            raise ValueError("Transform matrix must be 4x4")
-        for i, pl in enumerate(self.polylines):
-            if pl.size == 0:
-                continue
-            ones = np.ones((pl.shape[0], 1), dtype=float)
-            vh = np.hstack([pl, ones])
-            v2 = (M @ vh.T).T[:, :3]
-            self.polylines[i] = v2
-
-    # Transform application and matrix getters are inherited from Object3D
-
-    # Convenience transforms
-    def translate(self, t: Iterable[float]) -> None:
-        tx, ty, tz = [float(c) for c in t]
-        T = np.eye(4, dtype=float)
-        T[:3, 3] = [tx, ty, tz]
-        self._apply_and_record_transform("translate", T, params={"t": [tx, ty, tz]})
-
-    def scale(self, s: float) -> None:
-        sf = float(s)
-        S = np.eye(4, dtype=float)
-        S[0, 0] = sf
-        S[1, 1] = sf
-        S[2, 2] = sf
-        self._apply_and_record_transform(
-            "scale", S, params={"scale": sf}, is_uniform_scale=True, uniform_scale=sf
-        )
-
-    def center_on_centroid(self) -> None:
-        c = self.centroid()
-        if c is None:
-            return
-        T = np.eye(4, dtype=float)
-        T[:3, 3] = -np.asarray(c, dtype=float)
-        self._apply_and_record_transform("center", T, params={"center": c.tolist()})
-
-    def align_principal_axis_with_z(
-        self, target_axis: Optional[np.ndarray] = None
-    ) -> None:
-        if not self.polylines:
-            return
-        if target_axis is None:
-            target_axis = np.array([0.0, 0.0, 1.0], dtype=float)
-        pts = np.vstack(self.polylines).astype(float)
-        ctr = pts.mean(axis=0)
-        V = pts - ctr
-        cov = np.cov(V.T)
-        eigvals, eigvecs = np.linalg.eigh(cov)
-        principal = eigvecs[:, int(np.argmax(eigvals))]
-        # Build rotation from principal to target
-        v1 = principal / (np.linalg.norm(principal) + 1e-12)
-        v2 = target_axis / (np.linalg.norm(target_axis) + 1e-12)
-        if np.allclose(v1, v2):
-            return
-        if np.allclose(v1, -v2):
-            # 180-deg around a perpendicular axis
-            axis = np.array([1.0, 0.0, 0.0], dtype=float)
-            if abs(v1[0]) > 0.9:
-                axis = np.array([0.0, 1.0, 0.0], dtype=float)
-            angle = np.pi
-        else:
-            axis = np.cross(v1, v2)
-            axis = axis / (np.linalg.norm(axis) + 1e-12)
-            dot = np.clip(np.dot(v1, v2), -1.0, 1.0)
-            angle = float(np.arccos(dot))
-        K = np.array(
-            [[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]],
-            dtype=float,
-        )
-        R3 = np.eye(3, dtype=float) + np.sin(angle) * K + (1 - np.cos(angle)) * (K @ K)
-        # rotate about centroid
-        T1 = np.eye(4, dtype=float)
-        T2 = np.eye(4, dtype=float)
-        T1[:3, 3] = -ctr
-        T2[:3, 3] = ctr
-        R4 = np.eye(4, dtype=float)
-        R4[:3, :3] = R3
-        M = T2 @ R4 @ T1
-        self._apply_and_record_transform(
-            "align_principal_axis_with_z", M, params={"centroid": ctr.tolist()}
-        )
-
-    # Undo / reset
-    def reset_transforms(self) -> None:
-        self.polylines = [pl.copy() for pl in self.original_polylines]
-        self.transform_stack.clear()
-        self.M_world_from_local = np.eye(4, dtype=float)
-        self.M_local_from_world = np.eye(4, dtype=float)
-
-    def undo_last_transform(self) -> None:
-        if not self.transform_stack:
-            return
-        # Recompute from original for numerical stability
-        last = self.transform_stack.pop()
-        _ = last  # unused except pop
-        self.polylines = [pl.copy() for pl in self.original_polylines]
-        self.M_world_from_local = np.eye(4, dtype=float)
-        self.M_local_from_world = np.eye(4, dtype=float)
-        for t in self.transform_stack:
-            self._apply_transform_inplace(t.M)
-            self.M_world_from_local = t.M @ self.M_world_from_local
-        try:
-            self.M_local_from_world = np.linalg.inv(self.M_world_from_local)
-        except Exception:
-            pass
-
-    # ---------------------------------------------------------------------
-    # Interop with MeshManager
-    # ---------------------------------------------------------------------
-    def copy_transforms_from_mesh(
-        self, mesh_manager: Any, *, mode: str = "stack"
-    ) -> None:
-        """
-        Copy transforms from a `MeshManager`.
-
-        Args:
-            mesh_manager: instance of `mcf2swc.mesh.MeshManager`
-            mode: "stack" (default) to apply each recorded transform in order,
-                  or "composite" to apply the final composite matrix once.
-        """
-        # Lazy import type to avoid circular import at runtime
-        try:
-            from .mesh import MeshManager  # type: ignore
-        except Exception:
-            MeshManager = None  # type: ignore
-        if MeshManager is not None and not isinstance(mesh_manager, MeshManager):
-            logger.warning(
-                "copy_transforms_from_mesh: object is not a MeshManager instance"
-            )
-        if mode == "composite":
-            M = np.asarray(
-                getattr(mesh_manager, "M_world_from_local", np.eye(4)), dtype=float
-            )
-            self._apply_and_record_transform(
-                "mesh_composite_copy", M, params={"source": "MeshManager"}
-            )
-            return
-        # Default: apply each transform in order
-        stack = getattr(mesh_manager, "transform_stack", [])
-        for t in stack:
-            M = np.asarray(getattr(t, "M", None), dtype=float)
-            if M.shape == (4, 4):
-                self._apply_and_record_transform(
-                    getattr(t, "name", "mesh_transform_copy"),
-                    M,
-                    params=getattr(t, "params", None),
-                    is_uniform_scale=bool(getattr(t, "is_uniform_scale", False)),
-                    uniform_scale=(getattr(t, "uniform_scale", None)),
-                )
 
     # ---------------------------------------------------------------------
     # Projection / snapping to mesh surface
