@@ -13,6 +13,7 @@ Requires-Dist: networkx>=3.5
 Requires-Dist: numpy>=2.3.3
 Requires-Dist: pandas>=2.3.2
 Requires-Dist: plotly>=6.3.0
+Requires-Dist: pytest>=8.4.2
 Requires-Dist: pyvista[jupyter]>=0.46.3
 Requires-Dist: scipy>=1.16.1
 Requires-Dist: shapely>=2.1.1

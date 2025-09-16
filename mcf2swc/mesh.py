@@ -14,6 +14,7 @@ import trimesh
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
+
 def example_mesh(
     kind: str = "cylinder",
     *,
@@ -88,9 +89,15 @@ class MeshManager:
     Unified mesh class handling loading, processing, and analysis.
     """
 
-    def __init__(self, mesh: Optional[trimesh.Trimesh] = None, verbose: bool = True):
+    def __init__(
+        self,
+        mesh: Optional[trimesh.Trimesh] = None,
+        mesh_path: Optional[str] = None,
+        verbose: bool = True,
+    ):
         # Core mesh attributes
         self.mesh = mesh
+        self.mesh_path = mesh_path
 
         # Attributes
         self.verbose = verbose
@@ -102,8 +109,10 @@ class MeshManager:
             "watertight_fixed": 0,
             "degenerate_removed": 0,
         }
-        
-    
+
+        if mesh_path is not None:
+            self.load_mesh(mesh_path)
+
     # =================================================================
     # MESH LOADING AND BASIC OPERATIONS
     # =================================================================
@@ -147,7 +156,6 @@ class MeshManager:
                     len(mesh.vertices),
                     len(mesh.faces),
                 )
-                logger.debug("Bounds: %s", self.bounds)
 
             return mesh
 
@@ -162,7 +170,6 @@ class MeshManager:
 
     def to_trimesh(self):
         return self.mesh
-
 
     # combining the functions from utils into this class
 
@@ -528,7 +535,6 @@ class MeshManager:
         self.mesh = mesh
         return mesh
 
-
     def visualize_mesh_3d(
         self,
         title: str = "3D Mesh Visualization",
@@ -565,10 +571,12 @@ class MeshManager:
             # Try plotly first, then fallback to matplotlib
             try:
                 import plotly.graph_objects as go  # noqa: F401
+
                 backend = "plotly"
             except ImportError:
                 try:
                     import matplotlib.pyplot as plt  # noqa: F401
+
                     backend = "matplotlib"
                 except ImportError:
                     backend = "plotly"
@@ -670,7 +678,9 @@ class MeshManager:
                                 y=pts[:, 1],
                                 z=pts[:, 2],
                                 mode="lines",
-                                line=dict(color=poly_color, width=float(poly_line_width)),
+                                line=dict(
+                                    color=poly_color, width=float(poly_line_width)
+                                ),
                                 opacity=float(poly_opacity),
                                 name=f"Polyline {idx}",
                                 showlegend=False,
@@ -1002,4 +1012,3 @@ class MeshManager:
         fig.frames = frames
 
         return fig
-

@@ -31,14 +31,22 @@ class PolylinesSkeleton:
         polylines: List of (N_i, 3) arrays of float64
     """
 
-    def __init__(self, polylines: Optional[Sequence[np.ndarray]] = None):
+    def __init__(
+        self,
+        polylines: Optional[Sequence[np.ndarray]] = None,
+        polylines_path: Optional[str] = None,
+    ):
         self.polylines: List[np.ndarray] = []
+        self.polylines_path = polylines_path
         if polylines is not None:
             for pl in polylines:
                 arr = np.asarray(pl, dtype=float)
                 if arr.ndim != 2 or arr.shape[1] != 3:
                     raise ValueError("Each polyline must be an (N,3) array")
                 self.polylines.append(arr.copy())
+
+        if polylines_path is not None:
+            self.load_txt(polylines_path)
 
     # ---------------------------------------------------------------------
     # IO
@@ -143,7 +151,6 @@ class PolylinesSkeleton:
         self.polylines = [
             _resample_polyline(pl, float(spacing)) for pl in self.polylines
         ]
-
 
     # ---------------------------------------------------------------------
     # Projection / snapping to mesh surface

@@ -35,7 +35,7 @@ class SkeletonGraph(nx.Graph):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         # Populated by trace.build_traced_skeleton_graph for optional SWC export adjustments
-        
+
     def add_junction(self, j: Junction) -> None:
         """Add a SWC-like junction as a node with attributes.
 
@@ -58,7 +58,7 @@ class SkeletonGraph(nx.Graph):
         nodes: bool = True,
         edges: bool = True,
         with_radius: bool = True,
-        node_scale: float = 1.0,
+        node_scale: float = 5.0,
         node_color: str = "blue",
         edge_color: str = "black",
         node_alpha: float = 0.9,
@@ -106,10 +106,13 @@ class SkeletonGraph(nx.Graph):
                 try:
                     import plotly.graph_objects as go
                 except Exception as exc:  # pragma: no cover - import guard
-                    raise ImportError("plotly is required for backend='plotly'") from exc
+                    raise ImportError(
+                        "plotly is required for backend='plotly'"
+                    ) from exc
                 fig = go.Figure()
-                fig.update_layout(title=title or "Empty SkeletonGraph",
-                                  scene_aspectmode="data")
+                fig.update_layout(
+                    title=title or "Empty SkeletonGraph", scene_aspectmode="data"
+                )
                 if show:
                     fig.show()
                 return fig
@@ -119,9 +122,13 @@ class SkeletonGraph(nx.Graph):
         # Collect node coordinates and radii
         nids = list(self.nodes())
         xyzs = np.array([np.asarray(self.nodes[n]["xyz"]).reshape(3) for n in nids])
-        radii = np.array([
-            float(self.nodes[n].get("radius", 1.0)) if with_radius else 1.0 for n in nids
-        ], dtype=float)
+        radii = np.array(
+            [
+                float(self.nodes[n].get("radius", 1.0)) if with_radius else 1.0
+                for n in nids
+            ],
+            dtype=float,
+        )
 
         # Build edges as pairs of coordinates
         edge_pairs = list(self.edges()) if edges else []
@@ -144,16 +151,25 @@ class SkeletonGraph(nx.Graph):
             if edge_segments:
                 for p0, p1 in edge_segments:
                     ax.plot(
-                        [p0[0], p1[0]], [p0[1], p1[1]], [p0[2], p1[2]],
-                        color=edge_color, alpha=edge_alpha, linewidth=1.0,
+                        [p0[0], p1[0]],
+                        [p0[1], p1[1]],
+                        [p0[2], p1[2]],
+                        color=edge_color,
+                        alpha=edge_alpha,
+                        linewidth=1.0,
                     )
 
             # Plot nodes
             if nodes:
                 sizes = (np.clip(radii, 1e-6, np.inf) * node_scale) ** 2
                 ax.scatter(
-                    xyzs[:, 0], xyzs[:, 1], xyzs[:, 2],
-                    s=sizes, c=node_color, alpha=node_alpha, depthshade=True,
+                    xyzs[:, 0],
+                    xyzs[:, 1],
+                    xyzs[:, 2],
+                    s=sizes,
+                    c=node_color,
+                    alpha=node_alpha,
+                    depthshade=True,
                 )
 
             # Equal aspect and labels
@@ -183,7 +199,9 @@ class SkeletonGraph(nx.Graph):
                     ze += [p0[2], p1[2], None]
                 traces.append(
                     go.Scatter3d(
-                        x=xe, y=ye, z=ze,
+                        x=xe,
+                        y=ye,
+                        z=ze,
                         mode="lines",
                         line=dict(color=edge_color, width=3),
                         opacity=edge_alpha,
@@ -193,12 +211,16 @@ class SkeletonGraph(nx.Graph):
                 )
 
             if nodes:
-                size_pts = (np.clip(radii, 1e-6, np.inf) * node_scale)
+                size_pts = np.clip(radii, 1e-6, np.inf) * node_scale
                 traces.append(
                     go.Scatter3d(
-                        x=xyzs[:, 0], y=xyzs[:, 1], z=xyzs[:, 2],
+                        x=xyzs[:, 0],
+                        y=xyzs[:, 1],
+                        z=xyzs[:, 2],
                         mode="markers",
-                        marker=dict(size=size_pts, color=node_color, opacity=node_alpha),
+                        marker=dict(
+                            size=size_pts, color=node_color, opacity=node_alpha
+                        ),
                         name="nodes",
                         showlegend=False,
                     )
@@ -240,7 +262,6 @@ class SkeletonGraph(nx.Graph):
         ax.set_xlim(x_mid - half, x_mid + half)
         ax.set_ylim(y_mid - half, y_mid + half)
         ax.set_zlim(z_mid - half, z_mid + half)
-
 
     # ------------------------------------------------------------------
     # SWC Export
@@ -287,7 +308,9 @@ class SkeletonGraph(nx.Graph):
         # Ensure required attributes exist
         for n in self.nodes:
             if "xyz" not in self.nodes[n] or "radius" not in self.nodes[n]:
-                raise KeyError(f"Node {n} missing required attributes 'xyz' and 'radius'")
+                raise KeyError(
+                    f"Node {n} missing required attributes 'xyz' and 'radius'"
+                )
 
         # Build a spanning forest per connected component with DFS, choosing
         # a terminal (degree==1) node as root when available. Create a DFS
@@ -298,7 +321,9 @@ class SkeletonGraph(nx.Graph):
         comp_orders: list[list[int]] = []
 
         # Sort components deterministically by min node id
-        components = [sorted(int(x) for x in comp) for comp in nx.connected_components(self)]
+        components = [
+            sorted(int(x) for x in comp) for comp in nx.connected_components(self)
+        ]
         components.sort(key=lambda nodes: (len(nodes) == 0, nodes[0] if nodes else -1))
 
         for comp_nodes in components:
@@ -325,7 +350,7 @@ class SkeletonGraph(nx.Graph):
 
         # Determine non-tree edges (these would create cycles)
         extra_edges: list[tuple[int, int]] = []
-        for (u, v) in self.edges():
+        for u, v in self.edges():
             e = frozenset({int(u), int(v)})
             if e not in tree_edges:
                 extra_edges.append((int(u), int(v)))
@@ -349,11 +374,15 @@ class SkeletonGraph(nx.Graph):
             r = float(self.nodes[n].get("radius", 0.0))
             parent_orig = parents_orig.get(n, -1)
             parent_id = new_id[parent_orig] if parent_orig in new_id else -1
-            entries.append((int(nid), int(type_index), xyz[0], xyz[1], xyz[2], r, int(parent_id)))
+            entries.append(
+                (int(nid), int(type_index), xyz[0], xyz[1], xyz[2], r, int(parent_id))
+            )
 
         # Process extra edges by duplicating one endpoint and attaching to the other
-        cycle_annotations: list[tuple[int, int]] = []  # (duplicate_swc_id, original_swc_id)
-        for (u, v) in extra_edges:
+        cycle_annotations: list[tuple[int, int]] = (
+            []
+        )  # (duplicate_swc_id, original_swc_id)
+        for u, v in extra_edges:
             # Choose which node to duplicate: prefer higher degree (branching)
             deg_u = self.degree[u]
             deg_v = self.degree[v]
@@ -364,7 +393,9 @@ class SkeletonGraph(nx.Graph):
             r = float(self.nodes[dup_orig].get("radius", 0.0))
             dup_swc = int(next_index)
             parent_swc = int(new_id.get(other_orig, -1))
-            entries.append((dup_swc, int(type_index), xyz[0], xyz[1], xyz[2], r, parent_swc))
+            entries.append(
+                (dup_swc, int(type_index), xyz[0], xyz[1], xyz[2], r, parent_swc)
+            )
             # Record annotation using SWC indices
             cycle_annotations.append((dup_swc, int(new_id.get(dup_orig, dup_swc))))
             next_index += 1
@@ -394,5 +425,6 @@ class SkeletonGraph(nx.Graph):
         with open(path, "w", encoding="utf-8") as f:
             f.write(swc_text)
         return swc_text
+
 
 __all__ = ["SkeletonGraph", "Junction"]
