@@ -10,6 +10,7 @@ Public API:
 - SkeletonGraph, Junction
 - TraceOptions, build_traced_skeleton_graph
 """
+
 from __future__ import annotations
 
 import logging

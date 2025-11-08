@@ -6,7 +6,7 @@ Tangents.
 High level:
 - Resample each input polyline at approximately fixed arc-length spacing.
 - For each resampled point P with local tangent t, determine the tangent direction
-  from the 
+  from the
 - Fit an equivalent circle radius from that polygon using one of:
     * equivalent_area:    r = sqrt(A / pi)
     * equivalent_perimeter: r = L / (2*pi), using the exterior boundary length
@@ -46,33 +46,36 @@ logger.addHandler(logging.NullHandler())
 @dataclass
 class TraceOptions:
     """
-     Configuration options for polyline-guided tracing and local radius estimation.
+    Configuration options for polyline-guided tracing and local radius estimation.
 
-     These options control how input polylines are sampled, how local
-     cross-sections are probed and selected, and how radii are estimated from those
-     sections (or from the surface directly).
+    These options control how input polylines are sampled, how local
+    cross-sections are probed and selected, and how radii are estimated from those
+    sections (or from the surface directly).
 
-     Attributes:
-         spacing: Sampling step along polylines in mesh units. Resampling keeps
-             endpoints and inserts additional samples at approximately fixed arc-length.
-         radius_mode: Strategy for estimating node radii at each sample. One of:
-             - "equivalent_area" (default): r = sqrt(A/pi) using cross-section area.
-             - "equivalent_perimeter": r = L/(2*pi) using exterior boundary length.
-             - "section_median": median ray-to-boundary distance in the local section
-               plane from the sample origin (robust for irregular/partial sections).
-             - "section_circle_fit": algebraic circle fit (Kåsa) to the section boundary.
-             - "nearest_surface": distance from the sample point to nearest mesh surface
-               (bypasses sectioning entirely, useful as a robust fallback).
-         section_probe_eps: Step size (scaled by mesh bbox) for offsetting the section
-             plane origin along the local normal when the exact plane yields no curves.
-         section_probe_tries: Number of +/- k*eps offsets to try when seeking a section.
-         snap_polylines_to_mesh: If True, project polylines to nearest surface before
-             tracing. Useful when user-provided lines are slightly off the surface.
-         max_snap_distance: Optional distance threshold for snapping; larger moves are
-             ignored if provided.
-     """
+    Attributes:
+        spacing: Sampling step along polylines in mesh units. Resampling keeps
+            endpoints and inserts additional samples at approximately fixed arc-length.
+        radius_mode: Strategy for estimating node radii at each sample. One of:
+            - "equivalent_area" (default): r = sqrt(A/pi) using cross-section area.
+            - "equivalent_perimeter": r = L/(2*pi) using exterior boundary length.
+            - "section_median": median ray-to-boundary distance in the local section
+              plane from the sample origin (robust for irregular/partial sections).
+            - "section_circle_fit": algebraic circle fit (Kåsa) to the section boundary.
+            - "nearest_surface": distance from the sample point to nearest mesh surface
+              (bypasses sectioning entirely, useful as a robust fallback).
+        section_probe_eps: Step size (scaled by mesh bbox) for offsetting the section
+            plane origin along the local normal when the exact plane yields no curves.
+        section_probe_tries: Number of +/- k*eps offsets to try when seeking a section.
+        snap_polylines_to_mesh: If True, project polylines to nearest surface before
+            tracing. Useful when user-provided lines are slightly off the surface.
+        max_snap_distance: Optional distance threshold for snapping; larger moves are
+            ignored if provided.
+    """
+
     spacing: float = 1.0  # sampling step along polylines (mesh units)
-    radius_mode: str = "equivalent_area"  # {"equivalent_area", "equivalent_perimeter", "section_median", "section_circle_fit", "nearest_surface"}
+    radius_mode: str = (
+        "equivalent_area"  # {"equivalent_area", "equivalent_perimeter", "section_median", "section_circle_fit", "nearest_surface"}
+    )
     # When the exact plane P,t yields an empty section, try small offsets
     # along the normal by +/- k * eps until found or max_tries.
     section_probe_eps: float = 1e-4
@@ -324,17 +327,28 @@ def build_traced_skeleton_graph(
             reused = False
             if qk in pos_index:
                 existing_id, existing_xyz = pos_index[qk]
-                if float(np.linalg.norm(np.asarray(P, dtype=float) - existing_xyz)) <= quant_tol:
+                if (
+                    float(np.linalg.norm(np.asarray(P, dtype=float) - existing_xyz))
+                    <= quant_tol
+                ):
                     nid = int(existing_id)
                     reused = True
                 else:
                     nid = alloc_id()
-                    j = {"id": nid, "xyz": np.array(P, dtype=float), "radius": float(radius)}
+                    j = {
+                        "id": nid,
+                        "xyz": np.array(P, dtype=float),
+                        "radius": float(radius),
+                    }
                     skel.add_junction(_junction_from_dict(j))
                     pos_index[qk] = (nid, np.asarray(P, dtype=float))
             else:
                 nid = alloc_id()
-                j = {"id": nid, "xyz": np.array(P, dtype=float), "radius": float(radius)}
+                j = {
+                    "id": nid,
+                    "xyz": np.array(P, dtype=float),
+                    "radius": float(radius),
+                }
                 skel.add_junction(_junction_from_dict(j))
                 pos_index[qk] = (nid, np.asarray(P, dtype=float))
 
@@ -350,7 +364,9 @@ def build_traced_skeleton_graph(
                 try:
                     logger.debug(
                         "pl=%d i=%d: reused existing node %d for overlapping position",
-                        int(pl_index), int(i), int(nid)
+                        int(pl_index),
+                        int(i),
+                        int(nid),
                     )
                 except Exception:
                     pass
@@ -595,7 +611,9 @@ def _cross_section_polygon_near_point(
                 continue
             # Accept either entities or discrete loops; skip only if both are absent/empty
             entities_candidate = getattr(path, "entities", None)
-            has_entities = entities_candidate is not None and len(entities_candidate) > 0
+            has_entities = (
+                entities_candidate is not None and len(entities_candidate) > 0
+            )
             loops_candidate = getattr(path, "discrete", None)
             has_loops = loops_candidate is not None and len(loops_candidate) > 0
             if not (has_entities or has_loops):
@@ -748,7 +766,7 @@ def _radius_from_section_median(poly: sgeom.Polygon, *, n_rays: int = 64) -> flo
                 continue
             # Choose the nearest positive distance along the ray
             best = None
-            for (x, y) in pts:
+            for x, y in pts:
                 d = math.hypot(x, y)
                 # ensure same direction as (dx,dy) via dot >= 0
                 if x * dx + y * dy >= -1e-9:
