@@ -7,6 +7,8 @@ import networkx as nx
 import numpy as np
 import matplotlib.pyplot as plt
 
+from swctools import SWCModel, FrustaSet, plot_model
+
 
 @dataclass
 class Junction:
@@ -49,228 +51,13 @@ class SkeletonGraph(nx.Graph):
         )
 
     # ------------------------------------------------------------------
-    # Visualization
-    # ------------------------------------------------------------------
-    def plot(
-        self,
-        backend: str = "matplotlib",
-        *,
-        nodes: bool = True,
-        edges: bool = True,
-        with_radius: bool = True,
-        node_scale: float = 5.0,
-        node_color: str = "blue",
-        edge_color: str = "black",
-        node_alpha: float = 0.9,
-        edge_alpha: float = 0.6,
-        title: str | None = None,
-        ax=None,
-        show: bool = True,
-    ):
-        """
-        Plot the skeleton in 3D.
-
-        Parameters:
-            backend: "matplotlib" (default) or "plotly".
-            nodes: Whether to render nodes as scatter points.
-            edges: Whether to render edges as line segments.
-            with_radius: If True, scale node marker size by stored `radius`.
-            node_scale: Scalar scale factor for node sizes. For matplotlib,
-                final marker size is ``s = (radius * node_scale)**2`` if
-                ``with_radius`` else ``node_scale**2``.
-            node_color: Color for node markers.
-            edge_color: Color for edge segments.
-            node_alpha: Alpha for node markers.
-            edge_alpha: Alpha for edge segments.
-            title: Optional title for the plot.
-            ax: Existing matplotlib 3D axes to draw on. If None, a new figure
-                and axes are created.
-            show: If True, call ``plt.show()`` (matplotlib) or display the
-                figure (plotly) before returning.
-
-        Returns:
-            - Matplotlib: the ``Axes3D`` instance.
-            - Plotly: the ``go.Figure`` instance.
-        """
-
-        if self.number_of_nodes() == 0:
-            if backend == "matplotlib":
-                if ax is None:
-                    fig = plt.figure(figsize=(6, 5))
-                    ax = fig.add_subplot(111, projection="3d")
-                ax.set_title(title or "Empty SkeletonGraph")
-                if show:
-                    plt.show()
-                return ax
-            elif backend == "plotly":
-                try:
-                    import plotly.graph_objects as go
-                except Exception as exc:  # pragma: no cover - import guard
-                    raise ImportError(
-                        "plotly is required for backend='plotly'"
-                    ) from exc
-                fig = go.Figure()
-                fig.update_layout(
-                    title=title or "Empty SkeletonGraph", scene_aspectmode="data"
-                )
-                if show:
-                    fig.show()
-                return fig
-            else:
-                raise ValueError("backend must be 'matplotlib' or 'plotly'")
-
-        # Collect node coordinates and radii
-        nids = list(self.nodes())
-        xyzs = np.array([np.asarray(self.nodes[n]["xyz"]).reshape(3) for n in nids])
-        radii = np.array(
-            [
-                float(self.nodes[n].get("radius", 1.0)) if with_radius else 1.0
-                for n in nids
-            ],
-            dtype=float,
-        )
-
-        # Build edges as pairs of coordinates
-        edge_pairs = list(self.edges()) if edges else []
-        edge_segments = None
-        if edge_pairs:
-            edge_segments = [
-                (
-                    np.asarray(self.nodes[u]["xyz"]).reshape(3),
-                    np.asarray(self.nodes[v]["xyz"]).reshape(3),
-                )
-                for u, v in edge_pairs
-            ]
-
-        if backend == "matplotlib":
-            if ax is None:
-                fig = plt.figure(figsize=(6, 5))
-                ax = fig.add_subplot(111, projection="3d")
-
-            # Plot edges
-            if edge_segments:
-                for p0, p1 in edge_segments:
-                    ax.plot(
-                        [p0[0], p1[0]],
-                        [p0[1], p1[1]],
-                        [p0[2], p1[2]],
-                        color=edge_color,
-                        alpha=edge_alpha,
-                        linewidth=1.0,
-                    )
-
-            # Plot nodes
-            if nodes:
-                sizes = (np.clip(radii, 1e-6, np.inf) * node_scale) ** 2
-                ax.scatter(
-                    xyzs[:, 0],
-                    xyzs[:, 1],
-                    xyzs[:, 2],
-                    s=sizes,
-                    c=node_color,
-                    alpha=node_alpha,
-                    depthshade=True,
-                )
-
-            # Equal aspect and labels
-            self._set_axes_equal_3d(ax, xyzs)
-            if title:
-                ax.set_title(title)
-            ax.set_xlabel("X")
-            ax.set_ylabel("Y")
-            ax.set_zlabel("Z")
-            if show:
-                plt.show()
-            return ax
-
-        elif backend == "plotly":
-            try:
-                import plotly.graph_objects as go
-            except Exception as exc:  # pragma: no cover - import guard
-                raise ImportError("plotly is required for backend='plotly'") from exc
-
-            traces = []
-            if edges and edge_segments:
-                # Build a single lines trace with NaN breaks
-                xe, ye, ze = [], [], []
-                for p0, p1 in edge_segments:
-                    xe += [p0[0], p1[0], None]
-                    ye += [p0[1], p1[1], None]
-                    ze += [p0[2], p1[2], None]
-                traces.append(
-                    go.Scatter3d(
-                        x=xe,
-                        y=ye,
-                        z=ze,
-                        mode="lines",
-                        line=dict(color=edge_color, width=3),
-                        opacity=edge_alpha,
-                        name="edges",
-                        showlegend=False,
-                    )
-                )
-
-            if nodes:
-                size_pts = np.clip(radii, 1e-6, np.inf) * node_scale
-                traces.append(
-                    go.Scatter3d(
-                        x=xyzs[:, 0],
-                        y=xyzs[:, 1],
-                        z=xyzs[:, 2],
-                        mode="markers",
-                        marker=dict(
-                            size=size_pts, color=node_color, opacity=node_alpha
-                        ),
-                        name="nodes",
-                        showlegend=False,
-                    )
-                )
-
-            fig = go.Figure(data=traces)
-            fig.update_layout(
-                title=title,
-                scene_aspectmode="data",
-                margin=dict(l=0, r=0, b=0, t=40 if title else 10),
-            )
-            if show:
-                fig.show()
-            return fig
-
-        else:
-            raise ValueError("backend must be 'matplotlib' or 'plotly'")
-
-    @staticmethod
-    def _set_axes_equal_3d(ax, points: np.ndarray) -> None:
-        """Set 3D plot axes to equal scale based on provided points.
-
-        This makes spheres appear as spheres and cubes as cubes, regardless of
-        data ranges.
-        """
-        if points.size == 0:
-            return
-        x_limits = [np.min(points[:, 0]), np.max(points[:, 0])]
-        y_limits = [np.min(points[:, 1]), np.max(points[:, 1])]
-        z_limits = [np.min(points[:, 2]), np.max(points[:, 2])]
-        x_range = x_limits[1] - x_limits[0]
-        y_range = y_limits[1] - y_limits[0]
-        z_range = z_limits[1] - z_limits[0]
-        max_range = max(x_range, y_range, z_range)
-        x_mid = np.mean(x_limits)
-        y_mid = np.mean(y_limits)
-        z_mid = np.mean(z_limits)
-        half = max_range / 2.0
-        ax.set_xlim(x_mid - half, x_mid + half)
-        ax.set_ylim(y_mid - half, y_mid + half)
-        ax.set_zlim(z_mid - half, z_mid + half)
-
-    # ------------------------------------------------------------------
     # SWC Export
     # ------------------------------------------------------------------
-    def to_swc(
+    def to_swc_file(
         self,
         path: str | None = None,
         *,
-        type_index: int = 3,
+        tag: int = 3,
         annotate_breaks: bool = True,
     ) -> str:
         """Export the skeleton to SWC format, breaking cycles by duplicating nodes.
@@ -289,7 +76,7 @@ class SkeletonGraph(nx.Graph):
         Args:
             path: If provided, write the SWC text to this file. If None, return
                 the SWC text as a string.
-            type_index: Integer put in the T column for all nodes.
+            tag: Integer put in the T column for all nodes.
             annotate_breaks: If True, include header comments indicating how to
                 reconnect duplicates to recreate each broken cycle.
 
@@ -375,7 +162,7 @@ class SkeletonGraph(nx.Graph):
             parent_orig = parents_orig.get(n, -1)
             parent_id = new_id[parent_orig] if parent_orig in new_id else -1
             entries.append(
-                (int(nid), int(type_index), xyz[0], xyz[1], xyz[2], r, int(parent_id))
+                (int(nid), int(tag), xyz[0], xyz[1], xyz[2], r, int(parent_id))
             )
 
         # Process extra edges by duplicating one endpoint and attaching to the other
@@ -393,23 +180,21 @@ class SkeletonGraph(nx.Graph):
             r = float(self.nodes[dup_orig].get("radius", 0.0))
             dup_swc = int(next_index)
             parent_swc = int(new_id.get(other_orig, -1))
-            entries.append(
-                (dup_swc, int(type_index), xyz[0], xyz[1], xyz[2], r, parent_swc)
-            )
+            entries.append((dup_swc, int(tag), xyz[0], xyz[1], xyz[2], r, parent_swc))
             # Record annotation using SWC indices
             cycle_annotations.append((dup_swc, int(new_id.get(dup_orig, dup_swc))))
             next_index += 1
 
         # Compose SWC text
         lines: list[str] = []
-        lines.append("# generated by mcf2swc SkeletonGraph.to_swc")
+        lines.append("# generated by mcf2swc SkeletonGraph.to_swc_file")
         lines.append(
             f"# dfs_roots={' '.join(str(new_id.get(r, r)) for r in comp_roots)}"
         )
         lines.append(
             f"# nodes={self.number_of_nodes()} extra_edges={len(extra_edges)} duplicates={len(cycle_annotations)}"
         )
-        lines.append(f"# type_index={int(type_index)}")
+        lines.append(f"# tag={int(tag)}")
         if annotate_breaks and cycle_annotations:
             for dup_id, orig_id in cycle_annotations:
                 lines.append(f"# CYCLE_BREAK reconnect {dup_id} {orig_id}")

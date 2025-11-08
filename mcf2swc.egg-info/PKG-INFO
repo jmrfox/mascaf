@@ -17,6 +17,7 @@ Requires-Dist: pytest>=8.4.2
 Requires-Dist: pyvista[jupyter]>=0.46.3
 Requires-Dist: scipy>=1.16.1
 Requires-Dist: shapely>=2.1.1
+Requires-Dist: swctools
 Requires-Dist: trame>=3.12.0
 Requires-Dist: trimesh>=4.8.1
 Dynamic: requires-python

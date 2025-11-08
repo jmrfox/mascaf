@@ -10,6 +10,11 @@ High level:
 - Fit an equivalent circle radius from that polygon using one of:
     * equivalent_area:    r = sqrt(A / pi)
     * equivalent_perimeter: r = L / (2*pi), using the exterior boundary length
+    * section_median: median ray-to-boundary distance in the local section
+      plane from the sample origin (robust for irregular/partial sections).
+    * section_circle_fit: algebraic circle fit (Kåsa) to the section boundary.
+    * nearest_surface: distance from the sample point to nearest mesh surface
+      (bypasses sectioning entirely, useful as a robust fallback).
 - Create a SkeletonGraph with:
     - one node per sample at position P (xyz, the exact polyline coordinate) with the
       fitted radius
@@ -55,7 +60,7 @@ class TraceOptions:
     Attributes:
         spacing: Sampling step along polylines in mesh units. Resampling keeps
             endpoints and inserts additional samples at approximately fixed arc-length.
-        radius_mode: Strategy for estimating node radii at each sample. One of:
+        radius_strategy: Strategy for estimating node radii at each sample. One of:
             - "equivalent_area" (default): r = sqrt(A/pi) using cross-section area.
             - "equivalent_perimeter": r = L/(2*pi) using exterior boundary length.
             - "section_median": median ray-to-boundary distance in the local section
@@ -73,7 +78,7 @@ class TraceOptions:
     """
 
     spacing: float = 1.0  # sampling step along polylines (mesh units)
-    radius_mode: str = (
+    radius_strategy: str = (
         "equivalent_area"  # {"equivalent_area", "equivalent_perimeter", "section_median", "section_circle_fit", "nearest_surface"}
     )
     # When the exact plane P,t yields an empty section, try small offsets
@@ -105,20 +110,20 @@ def build_traced_skeleton_graph(
     - For each sample P with tangent T, intersects the mesh with the plane
       (origin=P, normal=T) and selects the polygon that covers/contains the local
       origin, or the one whose boundary is closest to it.
-    - Estimates a radius using `options.radius_mode` (equivalent area, equivalent
+    - Estimates a radius using `options.radius_strategy` (equivalent area, equivalent
       perimeter, section median, section circle fit, or nearest surface).
     - If no section is found near the exact plane, tries small offsets along ±T
       controlled by `section_probe_eps` and `section_probe_tries`.
     - If still no section is found, falls back to nearest surface distance.
 
     Records per-node diagnostics:
-      - `radius_source`: which strategy actually provided the radius
+      - `radius_strategy`: which strategy actually provided the radius
       - `inside_mesh`: whether the sample point appears inside the mesh (signed distance <= 0)
 
     Args:
         mesh: The mesh to intersect against (`trimesh.Trimesh`)
         polylines: Polyline guidance, in the same frame as the mesh.
-        options: `TraceOptions` controlling sampling, radius mode, and section probing.
+        options: `TraceOptions` controlling sampling, radius strategy, and section probing.
 
     Returns:
         A populated `SkeletonGraph`.
@@ -142,13 +147,13 @@ def build_traced_skeleton_graph(
         except Exception:
             pass
         logger.info(
-            "Tracing start: mesh[V=%d,F=%d], polylines=%d (pts=%d), spacing=%.3g, radius_mode=%s",
+            "Tracing start: mesh[V=%d,F=%d], polylines=%d (pts=%d), spacing=%.3g, radius_strategy=%s",
             len(mesh.vertices),
             len(mesh.faces),
             n_pl,
             total_pts,
             float(options.spacing),
-            str(options.radius_mode),
+            str(options.radius_strategy),
         )
     except Exception:
         pass
@@ -248,7 +253,7 @@ def build_traced_skeleton_graph(
 
             # Fit local radius according to selected mode
             radius = 0.0
-            radius_source = "unknown"
+            radius_strategy = "unknown"
             inside_mesh = None
 
             # Inside/outside diagnostic (does not alter logic; used for debugging)
@@ -262,9 +267,9 @@ def build_traced_skeleton_graph(
                 inside_mesh = None
 
             # Special case: explicitly request nearest surface distance
-            if options.radius_mode == "nearest_surface":
+            if options.radius_strategy == "nearest_surface":
                 radius = _nearest_surface_distance(P, mesh, V, v_kdtree)
-                radius_source = "nearest_surface"
+                radius_strategy = "nearest_surface"
             else:
                 # Try cross-section first
                 poly2d = _cross_section_polygon_near_point(
@@ -277,32 +282,32 @@ def build_traced_skeleton_graph(
                 if poly2d is not None:
                     used_section += 1
                     area = float(poly2d.area)
-                    mode = str(options.radius_mode)
+                    mode = str(options.radius_strategy)
                     if mode == "equivalent_perimeter":
                         perim = float(poly2d.exterior.length)
                         radius = perim / (2.0 * math.pi) if perim > 0 else 0.0
-                        radius_source = "equivalent_perimeter"
+                        radius_strategy = "equivalent_perimeter"
                     elif mode == "section_median":
                         radius = _radius_from_section_median(poly2d)
-                        radius_source = "section_median"
+                        radius_strategy = "section_median"
                     elif mode == "section_circle_fit":
                         r_fit = _radius_from_section_circle_fit(poly2d)
                         if not np.isfinite(r_fit) or r_fit <= 0:
                             # conservative fallback to equivalent area
                             radius = math.sqrt(area / math.pi) if area > 0 else 0.0
-                            radius_source = "equivalent_area_fallback"
+                            radius_strategy = "equivalent_area_fallback"
                         else:
                             radius = float(r_fit)
-                            radius_source = "section_circle_fit"
+                            radius_strategy = "section_circle_fit"
                     else:  # "equivalent_area" (default) or unknown => area-based
                         radius = math.sqrt(area / math.pi) if area > 0 else 0.0
-                        radius_source = "equivalent_area"
+                        radius_strategy = "equivalent_area"
                 else:
                     # No section found; robust fallback = nearest surface distance
                     area = 0.0
                     used_fallback += 1
                     radius = _nearest_surface_distance(P, mesh, V, v_kdtree)
-                    radius_source = "nearest_surface_fallback"
+                    radius_strategy = "nearest_surface_fallback"
 
             total_samples += 1
             # Per-sample diagnostics (DEBUG)
@@ -315,7 +320,7 @@ def build_traced_skeleton_graph(
                     float(P[1]),
                     float(P[2]),
                     float(radius),
-                    str(radius_source),
+                    str(radius_strategy),
                     str(inside_mesh),
                 )
             except Exception:
@@ -355,7 +360,7 @@ def build_traced_skeleton_graph(
             if not reused:
                 # Attach source metadata on the graph node for diagnostics
                 try:
-                    skel.nodes[nid]["radius_source"] = radius_source
+                    skel.nodes[nid]["radius_strategy"] = radius_strategy
                     if inside_mesh is not None:
                         skel.nodes[nid]["inside_mesh"] = bool(inside_mesh)
                 except Exception:

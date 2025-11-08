@@ -18,6 +18,10 @@ dependencies = [
     "pyvista[jupyter]>=0.46.3",
     "scipy>=1.16.1",
     "shapely>=2.1.1",
+    "swctools",
     "trame>=3.12.0",
     "trimesh>=4.8.1",
 ]
+
+[tool.uv.sources]
+swctools = { git = "https://github.com/jmrfox/swctools.git" }
