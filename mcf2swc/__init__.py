@@ -20,7 +20,7 @@ from importlib.metadata import PackageNotFoundError, version
 try:
     __version__ = version("mcf2swc")
 except PackageNotFoundError:  # pragma: no cover - best-effort in dev
-    __version__ = "0.0.0"
+    __version__ = "0.1.0"
 
 # Avoid "No handler found" warnings for library users; applications can configure logging.
 logging.getLogger(__name__).addHandler(logging.NullHandler())
@@ -33,7 +33,6 @@ from .trace import (  # noqa: E402
     TraceOptions,
     build_traced_skeleton_graph,
 )
-from .viz import show_swc  # noqa: E402
 
 __all__ = [
     "__version__",
@@ -47,6 +46,4 @@ __all__ = [
     # Tracing API
     "TraceOptions",
     "build_traced_skeleton_graph",
-    # Visualization
-    "show_swc",
 ]

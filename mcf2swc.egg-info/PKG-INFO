@@ -4,21 +4,16 @@ Version: 0.1.0
 Summary: Add your description here
 Requires-Python: >=3.12
 Description-Content-Type: text/markdown
-Requires-Dist: ipykernel>=6.30.1
-Requires-Dist: jupyter>=1.1.1
+Requires-Dist: ipykernel>=7.1.0
 Requires-Dist: matplotlib>=3.10.6
-Requires-Dist: navis>=1.10.0
-Requires-Dist: nbformat>=5.10.4
 Requires-Dist: networkx>=3.5
 Requires-Dist: numpy>=2.3.3
 Requires-Dist: pandas>=2.3.2
 Requires-Dist: plotly>=6.3.0
 Requires-Dist: pytest>=8.4.2
-Requires-Dist: pyvista[jupyter]>=0.46.3
 Requires-Dist: scipy>=1.16.1
 Requires-Dist: shapely>=2.1.1
 Requires-Dist: swctools
-Requires-Dist: trame>=3.12.0
 Requires-Dist: trimesh>=4.8.1
 Dynamic: requires-python
 

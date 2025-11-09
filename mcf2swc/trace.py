@@ -40,6 +40,7 @@ import trimesh
 
 from .polylines import PolylinesSkeleton
 from .skeleton import SkeletonGraph
+from .mesh import MeshManager
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
@@ -96,7 +97,7 @@ class TraceOptions:
 
 
 def build_traced_skeleton_graph(
-    mesh: trimesh.Trimesh,
+    mesh: trimesh.Trimesh | MeshManager,
     polylines: PolylinesSkeleton,
     *,
     options: Optional[TraceOptions] = None,
@@ -132,8 +133,11 @@ def build_traced_skeleton_graph(
         options = TraceOptions()
 
     # Resolve mesh
-    if not isinstance(mesh, trimesh.Trimesh):
-        raise TypeError("mesh must be a trimesh.Trimesh")
+    if not isinstance(mesh, (trimesh.Trimesh, MeshManager)):
+        raise TypeError("mesh must be a trimesh.Trimesh or MeshManager")
+
+    if isinstance(mesh, MeshManager):
+        mesh = mesh.mesh
 
     if len(mesh.vertices) == 0:
         raise ValueError("Mesh is empty or not provided")
