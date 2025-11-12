@@ -21,3 +21,11 @@ The main purpose of this package is to take a closed triangle mesh and the outpu
 5. Export the graph as an SWC file.
 
 Since SWC format does not support cycles, a graph with cycles is broken by locating a duplicate node and rewiring one incident cycle edge to the duplicate.
+
+## Mean Curvature Flow using CGAL
+
+The mean curvature flow (MCF) is a geometric evolution of a surface in 3D space. It is a process where the surface evolves over time, with the rate of change of the surface at each point determined by the mean curvature at that point. The mean curvature flow is a way to smooth out the surface and make it more regular, while preserving its overall shape and topology.
+
+You can easily compute the MCF data using the [Computational Geometry Algorithms Library (CGAL)](https://doc.cgal.org/latest/Surface_mesh_skeletonization/index.html) package. CGAL provides a standalone GUI program called `CGALLab` that includes the MCF skeletonization operation. You can download the Windows demo version of it here: [CGALLab Windows Demo](https://doc.cgal.org/latest/Manual/packages.html#:~:text=Triangulated%20Surface%20Mesh%20Skeletonization).
+
+Simply open the program, load your mesh, go to `Operations -> Triangulated Surface Mesh Skeletonization -> Mean Curvature Skeleton (Advanced)`, apply the operation, then right-click on the new object labelled "fixed points" and save it to a `polylines.text` file.
