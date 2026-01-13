@@ -38,6 +38,10 @@ from .radius_optimizer import (  # noqa: E402
     RadiusOptimizer,
     optimize_skeleton_radii,
 )
+from .radius_optimizer_local import (  # noqa: E402
+    LocalOptimizerOptions,
+    LocalRadiusOptimizer,
+)
 
 __all__ = [
     "__version__",
@@ -55,4 +59,6 @@ __all__ = [
     "OptimizerOptions",
     "RadiusOptimizer",
     "optimize_skeleton_radii",
+    "LocalOptimizerOptions",
+    "LocalRadiusOptimizer",
 ]
