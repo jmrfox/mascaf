@@ -52,13 +52,13 @@ where `r₁` and `r₂` are the radii at the two endpoints, and `h` is the edge 
 
 ```python
 from mcf2swc import (
-    build_traced_skeleton_graph,
+    fit_swc,
     optimize_skeleton_radii,
     OptimizerOptions,
 )
 
 # Step 1: Build initial skeleton with trace.py
-skeleton = build_traced_skeleton_graph(mesh, polylines)
+skeleton = fit_swc(mesh, polylines)
 
 # Step 2: Optimize radii
 optimized_skeleton = optimize_skeleton_radii(skeleton, mesh)
@@ -176,8 +176,8 @@ optimize_skeleton_radii(
 from mcf2swc import (
     MeshManager,
     PolylinesSkeleton,
-    TraceOptions,
-    build_traced_skeleton_graph,
+    SWCFitOptions,
+    fit_swc,
     OptimizerOptions,
     optimize_skeleton_radii,
 )
@@ -187,11 +187,11 @@ mesh_mgr = MeshManager(mesh_path="neuron.obj")
 polylines = PolylinesSkeleton.from_file("skeleton.polylines.txt")
 
 # 2. Build initial skeleton with procedural radius estimates
-trace_opts = TraceOptions(
+trace_opts = SWCFitOptions(
     spacing=1.0,
     radius_strategy="equivalent_area",  # Initial estimate
 )
-skeleton = build_traced_skeleton_graph(
+skeleton = fit_swc(
     mesh_mgr.mesh,
     polylines,
     options=trace_opts,

@@ -1,112 +1,85 @@
 """
-Test multi-directional sampling for medial axis centering on TS2 skeleton.
+Test multi-directional sampling for medial axis centering.
 """
 
+import pytest
 import numpy as np
 from mcf2swc import (
     PolylinesSkeleton,
-    MeshManager,
     SkeletonOptimizer,
     SkeletonOptimizerOptions,
+    example_mesh,
 )
 
-# Load TS2 mesh and skeleton
-print("Loading TS2 mesh and skeleton...")
-mesh_mgr = MeshManager(mesh_path="data/mesh/processed/TS2.obj")
-skeleton = PolylinesSkeleton.from_txt(
-    "data/mcf_skeletons/TS2_qst0.6_mcst5.polylines.txt"
-)
 
-# Prune short branches first
-print("\nPruning short branches...")
-skeleton_pruned = skeleton.prune_short_branches(min_length=10.0, verbose=False)
-print(
-    f"Pruned skeleton: {len(skeleton_pruned.polylines)} polylines, {skeleton_pruned.total_points()} points"
-)
+@pytest.mark.parametrize("num_directions", [2, 4, 8, 16])
+def test_various_probe_directions(num_directions):
+    """Test medial axis centering with various numbers of probe directions."""
+    mesh = example_mesh("cylinder", radius=1.0, height=10.0)
 
-# Test different numbers of probe directions
-test_configs = [
-    {"name": "2 directions (opposite pair)", "num_dirs": 2},
-    {"name": "4 directions (2 perpendicular pairs)", "num_dirs": 4},
-    {"name": "8 directions", "num_dirs": 8},
-    {"name": "16 directions", "num_dirs": 16},
-]
-
-results = []
-
-for config in test_configs:
-    print("\n" + "=" * 70)
-    print(f"Testing: {config['name']}")
-    print("=" * 70)
+    points = np.array(
+        [
+            [0.5, 0.5, -3.5],
+            [0.5, 0.5, 0.0],
+            [0.5, 0.5, 3.5],
+        ]
+    )
+    skeleton = PolylinesSkeleton([points])
 
     options = SkeletonOptimizerOptions(
         centering_method="medial_axis",
-        probe_distance=20.0,
-        num_probe_directions=config["num_dirs"],
-        max_iterations=50,
+        probe_distance=5.0,
+        num_probe_directions=num_directions,
+        max_iterations=10,
         step_size=0.1,
         preserve_endpoints=True,
         smoothing_weight=0.3,
         verbose=False,
     )
 
-    optimizer = SkeletonOptimizer(skeleton_pruned, mesh_mgr.mesh, options)
+    optimizer = SkeletonOptimizer(skeleton, mesh, options)
     optimized = optimizer.optimize()
 
-    # Compute statistics
-    all_points = np.vstack(optimized.polylines)
-    distances = mesh_mgr.mesh.nearest.signed_distance(all_points)
-    inside = mesh_mgr.mesh.contains(all_points)
+    assert len(optimized.polylines) == 1
+    assert optimized.total_points() == skeleton.total_points()
 
-    result = {
-        "name": config["name"],
-        "num_dirs": config["num_dirs"],
-        "points_inside": inside.sum(),
-        "total_points": len(inside),
-        "mean_distance": np.abs(distances).mean(),
-        "max_distance": np.abs(distances).max(),
-        "std_distance": np.abs(distances).std(),
-    }
-    results.append(result)
+    optimized_points = optimized.polylines[0]
+    optimized_distances = np.linalg.norm(optimized_points[:, :2], axis=1)
 
-    print(f"  Points inside mesh: {result['points_inside']}/{result['total_points']}")
-    print(f"  Mean distance to surface: {result['mean_distance']:.4f}")
-    print(f"  Max distance to surface: {result['max_distance']:.4f}")
-    print(f"  Std distance to surface: {result['std_distance']:.4f}")
+    assert np.all(optimized_distances < 1.0)
 
-# Summary comparison
-print("\n" + "=" * 70)
-print("Summary Comparison")
-print("=" * 70)
-print(f"{'Configuration':<40} {'Mean Dist':>12} {'Max Dist':>12} {'Std Dist':>12}")
-print("-" * 70)
-for r in results:
-    print(
-        f"{r['name']:<40} {r['mean_distance']:>12.4f} {r['max_distance']:>12.4f} {r['std_distance']:>12.4f}"
+
+def test_direction_count_comparison():
+    """Test that increasing probe directions generally improves or maintains quality."""
+    mesh = example_mesh("cylinder", radius=1.0, height=10.0)
+
+    points = np.array(
+        [
+            [0.6, 0.6, -3.5],
+            [0.6, 0.6, 0.0],
+            [0.6, 0.6, 3.5],
+        ]
     )
+    skeleton = PolylinesSkeleton([points])
 
-# Find best configuration
-best_idx = np.argmin([r["mean_distance"] for r in results])
-print(f"\nBest configuration: {results[best_idx]['name']}")
-print(
-    f"  Mean distance improvement over 2 directions: {results[0]['mean_distance'] - results[best_idx]['mean_distance']:.4f}"
-)
+    results = []
+    for num_dirs in [2, 4, 8]:
+        options = SkeletonOptimizerOptions(
+            centering_method="medial_axis",
+            probe_distance=5.0,
+            num_probe_directions=num_dirs,
+            max_iterations=15,
+            step_size=0.1,
+            preserve_endpoints=False,
+            smoothing_weight=0.3,
+            verbose=False,
+        )
 
-# Save best result
-if best_idx > 0:  # If not the first one
-    print(f"\nRe-running best configuration and saving...")
-    best_config = test_configs[best_idx]
-    options = SkeletonOptimizerOptions(
-        centering_method="medial_axis",
-        probe_distance=20.0,
-        num_probe_directions=best_config["num_dirs"],
-        max_iterations=50,
-        step_size=0.1,
-        preserve_endpoints=True,
-        smoothing_weight=0.3,
-        verbose=False,
-    )
-    optimizer = SkeletonOptimizer(skeleton_pruned, mesh_mgr.mesh, options)
-    optimized_best = optimizer.optimize()
-    optimized_best.to_txt("data/mcf_skeletons/TS2_optimized_multi_dir.polylines.txt")
-    print("Saved to: data/mcf_skeletons/TS2_optimized_multi_dir.polylines.txt")
+        optimizer = SkeletonOptimizer(skeleton, mesh, options)
+        optimized = optimizer.optimize()
+
+        optimized_points = optimized.polylines[0]
+        mean_distance = np.mean(np.linalg.norm(optimized_points[:, :2], axis=1))
+        results.append(mean_distance)
+
+    assert results[2] <= results[0] * 1.2

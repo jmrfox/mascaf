@@ -1,98 +1,104 @@
 """
-Test the new medial axis centering method on TS2 skeleton.
+Test medial axis centering method for skeleton optimization.
 """
 
+from pathlib import Path
+import pytest
 import numpy as np
 from mcf2swc import (
     PolylinesSkeleton,
-    MeshManager,
     SkeletonOptimizer,
     SkeletonOptimizerOptions,
+    example_mesh,
 )
 
-# Load TS2 mesh and skeleton
-print("Loading TS2 mesh and skeleton...")
-mesh_mgr = MeshManager(mesh_path="data/mesh/processed/TS2.obj")
-skeleton = PolylinesSkeleton.from_txt(
-    "data/mcf_skeletons/TS2_qst0.6_mcst5.polylines.txt"
-)
 
-# Prune short branches first
-print("\nPruning short branches...")
-skeleton_pruned = skeleton.prune_short_branches(min_length=10.0, verbose=True)
+def test_closest_point_centering():
+    """Test skeleton optimization with closest_point centering method."""
+    mesh = example_mesh("cylinder", radius=1.0, height=10.0)
 
-print(
-    f"\nPruned skeleton: {len(skeleton_pruned.polylines)} polylines, {skeleton_pruned.total_points()} points"
-)
+    points = np.array(
+        [
+            [0.3, 0.2, -3.5],
+            [0.3, 0.2, 0.0],
+            [0.3, 0.2, 3.5],
+        ]
+    )
+    skeleton = PolylinesSkeleton([points])
 
-# Test 1: Optimize with closest_point method
-print("\n" + "=" * 70)
-print("Test 1: Optimization with 'closest_point' centering")
-print("=" * 70)
+    options = SkeletonOptimizerOptions(
+        centering_method="closest_point",
+        max_iterations=10,
+        step_size=0.1,
+        preserve_endpoints=True,
+        smoothing_weight=0.3,
+        verbose=False,
+    )
 
-options_cp = SkeletonOptimizerOptions(
-    centering_method="closest_point",
-    max_iterations=50,
-    step_size=0.1,
-    preserve_endpoints=True,
-    smoothing_weight=0.3,
-    verbose=True,
-)
+    optimizer = SkeletonOptimizer(skeleton, mesh, options)
+    optimized = optimizer.optimize()
 
-optimizer_cp = SkeletonOptimizer(skeleton_pruned, mesh_mgr.mesh, options_cp)
-optimized_cp = optimizer_cp.optimize()
+    assert len(optimized.polylines) == 1
+    assert optimized.total_points() == skeleton.total_points()
 
-# Compute statistics
-all_points_cp = np.vstack(optimized_cp.polylines)
-distances_cp = mesh_mgr.mesh.nearest.signed_distance(all_points_cp)
-inside_cp = mesh_mgr.mesh.contains(all_points_cp)
 
-print(f"\nResults (closest_point):")
-print(f"  Points inside mesh: {inside_cp.sum()}/{len(inside_cp)}")
-print(f"  Mean distance to surface: {np.abs(distances_cp).mean():.4f}")
-print(f"  Max distance to surface: {np.abs(distances_cp).max():.4f}")
+def test_medial_axis_centering():
+    """Test skeleton optimization with medial_axis centering method."""
+    mesh = example_mesh("cylinder", radius=1.0, height=10.0)
 
-# Test 2: Optimize with medial_axis method
-print("\n" + "=" * 70)
-print("Test 2: Optimization with 'medial_axis' centering")
-print("=" * 70)
+    points = np.array(
+        [
+            [0.3, 0.2, -3.5],
+            [0.3, 0.2, 0.0],
+            [0.3, 0.2, 3.5],
+        ]
+    )
+    skeleton = PolylinesSkeleton([points])
 
-options_ma = SkeletonOptimizerOptions(
-    centering_method="medial_axis",
-    probe_distance=20.0,  # Adjust based on mesh size
-    max_iterations=50,
-    step_size=0.1,
-    preserve_endpoints=True,
-    smoothing_weight=0.3,
-    verbose=True,
-)
+    options = SkeletonOptimizerOptions(
+        centering_method="medial_axis",
+        probe_distance=5.0,
+        max_iterations=10,
+        step_size=0.1,
+        preserve_endpoints=True,
+        smoothing_weight=0.3,
+        verbose=False,
+    )
 
-optimizer_ma = SkeletonOptimizer(skeleton_pruned, mesh_mgr.mesh, options_ma)
-optimized_ma = optimizer_ma.optimize()
+    optimizer = SkeletonOptimizer(skeleton, mesh, options)
+    optimized = optimizer.optimize()
 
-# Compute statistics
-all_points_ma = np.vstack(optimized_ma.polylines)
-distances_ma = mesh_mgr.mesh.nearest.signed_distance(all_points_ma)
-inside_ma = mesh_mgr.mesh.contains(all_points_ma)
+    assert len(optimized.polylines) == 1
+    assert optimized.total_points() == skeleton.total_points()
 
-print(f"\nResults (medial_axis):")
-print(f"  Points inside mesh: {inside_ma.sum()}/{len(inside_ma)}")
-print(f"  Mean distance to surface: {np.abs(distances_ma).mean():.4f}")
-print(f"  Max distance to surface: {np.abs(distances_ma).max():.4f}")
 
-# Comparison
-print("\n" + "=" * 70)
-print("Comparison")
-print("=" * 70)
-print(
-    f"Mean distance improvement: {np.abs(distances_cp).mean() - np.abs(distances_ma).mean():.4f}"
-)
-print(f"  (positive = medial_axis is better)")
+def test_centering_improves_position():
+    """Test that optimization moves points closer to center."""
+    mesh = example_mesh("cylinder", radius=1.0, height=10.0)
 
-# Save results
-print("\nSaving optimized skeletons...")
-optimized_cp.to_txt("data/mcf_skeletons/TS2_optimized_closest_point.polylines.txt")
-optimized_ma.to_txt("data/mcf_skeletons/TS2_optimized_medial_axis.polylines.txt")
-print("Saved:")
-print("  - data/mcf_skeletons/TS2_optimized_closest_point.polylines.txt")
-print("  - data/mcf_skeletons/TS2_optimized_medial_axis.polylines.txt")
+    points = np.array(
+        [
+            [0.5, 0.5, -3.5],
+            [0.5, 0.5, 0.0],
+            [0.5, 0.5, 3.5],
+        ]
+    )
+    skeleton = PolylinesSkeleton([points])
+
+    options = SkeletonOptimizerOptions(
+        centering_method="closest_point",
+        max_iterations=20,
+        step_size=0.1,
+        preserve_endpoints=False,
+        smoothing_weight=0.3,
+        verbose=False,
+    )
+
+    optimizer = SkeletonOptimizer(skeleton, mesh, options)
+    optimized = optimizer.optimize()
+
+    original_distances = np.linalg.norm(points[:, :2], axis=1)
+    optimized_points = optimized.polylines[0]
+    optimized_distances = np.linalg.norm(optimized_points[:, :2], axis=1)
+
+    assert np.mean(optimized_distances) < np.mean(original_distances)

@@ -2,83 +2,60 @@
 Test branch pruning on TS2 skeleton.
 """
 
+from pathlib import Path
+import pytest
 import numpy as np
 from mcf2swc import PolylinesSkeleton
 
-# Load TS2 skeleton
-print("Loading TS2 skeleton...")
-skeleton = PolylinesSkeleton.from_txt(
-    "data/mcf_skeletons/TS2_qst0.6_mcst5.polylines.txt"
-)
 
-print(f"\nOriginal skeleton:")
-print(f"  Number of polylines: {len(skeleton.polylines)}")
-print(f"  Total points: {skeleton.total_points()}")
+ROOT = Path(__file__).resolve().parents[1]
+DATA = ROOT / "data" / "mcf_skeletons"
 
-# Compute and display branch lengths
-print(f"\nBranch lengths:")
-for i, pl in enumerate(skeleton.polylines):
-    length = skeleton._compute_polyline_length(pl)
-    print(f"  Polyline {i}: {len(pl)} points, length = {length:.2f}")
 
-# Show topology before pruning
-print("\n" + "=" * 70)
-print("Topology before pruning:")
-print("=" * 70)
+@pytest.fixture
+def ts2_skeleton():
+    """Load TS2 skeleton for testing."""
+    skeleton_path = DATA / "TS2_qst0.6_mcst5.polylines.txt"
+    if not skeleton_path.exists():
+        pytest.skip(f"TS2 skeleton not found at {skeleton_path}")
+    return PolylinesSkeleton.from_txt(str(skeleton_path))
 
-topology_before = skeleton.detect_branch_points(tolerance=1e-6)
-print(f"Branch points: {len(topology_before['branch_points'])}")
-print(f"True endpoints: {len(topology_before['endpoints'])}")
 
-# Test pruning with different thresholds
-print("\n" + "=" * 70)
-print("Testing pruning with min_length=10.0")
-print("=" * 70)
+def test_prune_short_branches_basic(ts2_skeleton):
+    """Test basic branch pruning functionality."""
+    original_count = len(ts2_skeleton.polylines)
 
-pruned = skeleton.prune_short_branches(min_length=10.0, verbose=True)
+    pruned = ts2_skeleton.prune_short_branches(min_length=10.0, verbose=False)
 
-print(f"\nAfter pruning:")
-print(f"  Number of polylines: {len(pruned.polylines)}")
-print(f"  Total points: {pruned.total_points()}")
+    assert len(pruned.polylines) <= original_count
+    assert pruned.total_points() <= ts2_skeleton.total_points()
 
-print(f"\nRemaining branch lengths:")
-for i, pl in enumerate(pruned.polylines):
-    length = pruned._compute_polyline_length(pl)
-    print(f"  Polyline {i}: {len(pl)} points, length = {length:.2f}")
 
-# Show topology after pruning
-print("\n" + "=" * 70)
-print("Topology after pruning:")
-print("=" * 70)
+def test_prune_short_branches_length_threshold(ts2_skeleton):
+    """Test that pruning removes branches below length threshold."""
+    min_length = 10.0
+    pruned = ts2_skeleton.prune_short_branches(min_length=min_length, verbose=False)
 
-topology_after = pruned.detect_branch_points(tolerance=1e-6)
-print(f"Branch points: {len(topology_after['branch_points'])}")
-print(f"True endpoints: {len(topology_after['endpoints'])}")
+    for pl in pruned.polylines:
+        length = pruned._compute_polyline_length(pl)
+        assert length >= min_length or np.isclose(length, min_length, rtol=0.1)
 
-print(f"\nBranch point details:")
-for (poly_idx, point_idx), location in zip(
-    topology_after["branch_points"], topology_after["branch_locations"]
-):
-    print(f"  Polyline {poly_idx}, point {point_idx}")
 
-print(f"\nTrue endpoint details:")
-for (poly_idx, point_idx), location in zip(
-    topology_after["endpoints"], topology_after["endpoint_locations"]
-):
-    print(f"  Polyline {poly_idx}, point {point_idx}")
+def test_prune_percentile_based(ts2_skeleton):
+    """Test percentile-based pruning."""
+    pruned = ts2_skeleton.prune_short_branches(min_length_percentile=20, verbose=False)
 
-# Try percentile-based pruning
-print("\n" + "=" * 70)
-print("Testing pruning with min_length_percentile=20")
-print("=" * 70)
+    assert len(pruned.polylines) <= len(ts2_skeleton.polylines)
+    assert isinstance(pruned, PolylinesSkeleton)
 
-pruned2 = skeleton.prune_short_branches(min_length_percentile=20, verbose=True)
 
-print(f"\nAfter percentile-based pruning:")
-print(f"  Number of polylines: {len(pruned2.polylines)}")
+def test_pruning_preserves_topology(ts2_skeleton):
+    """Test that pruning maintains valid topology."""
+    pruned = ts2_skeleton.prune_short_branches(min_length=10.0, verbose=False)
 
-# Save pruned skeleton
-print("\n" + "=" * 70)
-print("Saving pruned skeleton...")
-pruned.to_txt("data/mcf_skeletons/TS2_pruned.polylines.txt")
-print("Saved to: data/mcf_skeletons/TS2_pruned.polylines.txt")
+    topology = pruned.detect_branch_points(tolerance=1e-6)
+
+    assert "branch_points" in topology
+    assert "endpoints" in topology
+    assert isinstance(topology["branch_points"], list)
+    assert isinstance(topology["endpoints"], list)

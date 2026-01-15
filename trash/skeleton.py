@@ -36,7 +36,7 @@ class SkeletonGraph(nx.Graph):
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        # Populated by trace.build_traced_skeleton_graph for optional SWC export adjustments
+        # Populated by trace.fit_swc for optional SWC export adjustments
 
     def add_junction(self, j: Junction) -> None:
         """Add a SWC-like junction as a node with attributes.

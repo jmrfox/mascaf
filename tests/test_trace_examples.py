@@ -4,8 +4,8 @@ import numpy as np
 
 from mcf2swc import (
     example_mesh,
-    build_traced_skeleton_graph,
-    TraceOptions,
+    fit_swc,
+    SWCFitOptions,
     PolylinesSkeleton,
 )
 
@@ -21,8 +21,8 @@ def test_cylinder_trace_non_empty():
     assert pls.total_points() > 0
 
     # Use a reasonable spacing to ensure several samples along the path
-    opts = TraceOptions(spacing=0.5, radius_strategy="equivalent_area")
-    G = build_traced_skeleton_graph(mesh, pls, options=opts)
+    opts = SWCFitOptions(spacing=0.5, radius_strategy="equivalent_area")
+    G = fit_swc(mesh, pls, options=opts)
 
     assert G.number_of_nodes() > 0, "Cylinder trace produced no nodes"
     assert G.number_of_edges() > 0, "Cylinder trace produced no edges"
@@ -35,8 +35,8 @@ def test_torus_trace_non_empty():
     assert pls.total_points() > 0
 
     # Spacing small enough to capture curvature around the torus major ring
-    opts = TraceOptions(spacing=0.5, radius_strategy="equivalent_area")
-    G = build_traced_skeleton_graph(mesh, pls, options=opts)
+    opts = SWCFitOptions(spacing=0.5, radius_strategy="equivalent_area")
+    G = fit_swc(mesh, pls, options=opts)
 
     assert G.number_of_nodes() > 0, "Torus trace produced no nodes"
     assert G.number_of_edges() > 0, "Torus trace produced no edges"

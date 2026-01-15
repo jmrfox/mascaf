@@ -12,7 +12,7 @@ Public API:
 - MeshManager
 - PolylinesSkeleton
 - SWCModel (from swctools)
-- TraceOptions, build_traced_skeleton_graph
+- SWCFitOptions, fit_swc
 """
 
 from __future__ import annotations
@@ -35,8 +35,8 @@ from swctools import SWCModel  # noqa: E402
 from .mesh import MeshManager, example_mesh  # noqa: E402
 from .polylines import PolylinesSkeleton  # noqa: E402
 from .trace import (  # noqa: E402
-    TraceOptions,
-    build_traced_skeleton_graph,
+    SWCFitOptions,
+    fit_swc,
 )
 from .radius_optimizer import (  # noqa: E402
     OptimizerOptions,
@@ -61,8 +61,8 @@ __all__ = [
     # SWC model (from swctools)
     "SWCModel",
     # Tracing API
-    "TraceOptions",
-    "build_traced_skeleton_graph",
+    "SWCFitOptions",
+    "fit_swc",
     # Radius optimization
     "OptimizerOptions",
     "RadiusOptimizer",
