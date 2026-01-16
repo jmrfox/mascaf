@@ -92,11 +92,76 @@ class FitOptions:
     # Optional: snap polylines to mesh surface prior to tracing
     snap_polylines_to_mesh: bool = False
     max_snap_distance: Optional[float] = None
+    # Multi-tangent radius reduction for nodes with multiple edges
+    multi_tangent_reduction: str = "median"  # {"mean", "min", "max", "median"}
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
+
+def _compute_skeleton_node_radii(
+    skeleton: SkeletonGraph,
+    mesh: trimesh.Trimesh,
+    options: FitOptions,
+    eps: float,
+    V: np.ndarray,
+    v_kdtree,
+) -> Dict[int, float]:
+    """
+    Compute radii for all skeleton nodes using multi-tangent approach.
+
+    For each node, computes radii for each connected edge direction and reduces them
+    to a single value using the specified reduction method.
+
+    Args:
+        skeleton: Input skeleton graph
+        mesh: Mesh to intersect with
+        options: Fitting options
+        eps: Epsilon for plane offset probing
+        V: Mesh vertices array
+        v_kdtree: KD-tree for nearest surface queries
+
+    Returns:
+        Dictionary mapping node IDs to computed radii
+    """
+    node_radii = {}
+
+    for node in skeleton.nodes():
+        node_pos = skeleton.get_node_position(node)
+
+        # Compute tangent directions for this node
+        tangents = _compute_node_tangents(skeleton, node)
+
+        # Compute radius for each tangent direction
+        tangent_radii = []
+        for tangent in tangents:
+            radius, _ = _compute_radius_for_tangent(
+                point=node_pos,
+                tangent=tangent,
+                mesh=mesh,
+                radius_strategy=options.radius_strategy,
+                eps=eps,
+                max_tries=int(options.section_probe_tries),
+                V=V,
+                v_kdtree=v_kdtree,
+            )
+            tangent_radii.append(radius)
+
+        # Reduce multiple radii to single value
+        if len(tangent_radii) > 1:
+            final_radius = _reduce_multi_radii(
+                tangent_radii, options.multi_tangent_reduction
+            )
+        elif len(tangent_radii) == 1:
+            final_radius = tangent_radii[0]
+        else:
+            final_radius = 0.0
+
+        node_radii[node] = final_radius
+
+    return node_radii
 
 
 def fit_morphology(
@@ -220,6 +285,11 @@ def fit_morphology(
 
     pos_index: dict[tuple[int, int, int], tuple[int, np.ndarray]] = {}
 
+    # Compute radii for all skeleton nodes using multi-tangent approach
+    logger.info("Computing skeleton node radii using multi-tangent approach...")
+    node_radii = _compute_skeleton_node_radii(skel, mesh, options, eps, V, v_kdtree)
+    logger.info("Computed radii for %d skeleton nodes", len(node_radii))
+
     # Process each edge in the skeleton graph
     # Group edges by polyline_idx to maintain connectivity
     edge_groups = {}
@@ -297,9 +367,9 @@ def fit_morphology(
             # Use tangent as normal for cross-section plane
             n = tangent
 
-            # Fit local radius according to selected mode
+            # Fit local radius using multi-tangent approach
             radius = 0.0
-            radius_strategy = "unknown"
+            radius_strategy = "multi_tangent"
             inside_mesh = None
 
             # Inside/outside diagnostic (does not alter logic; used for debugging)
@@ -312,48 +382,38 @@ def fit_morphology(
             except Exception:
                 inside_mesh = None
 
-            # Special case: explicitly request nearest surface distance
-            if options.radius_strategy == "nearest_surface":
-                radius = _nearest_surface_distance(P, mesh, V, v_kdtree)
-                radius_strategy = "nearest_surface"
+            # Check if this sample point coincides with an original skeleton node
+            coincident_node = None
+            for node_id, node_radius in node_radii.items():
+                node_pos = skel.get_node_position(node_id)
+                if np.linalg.norm(P - node_pos) < 1e-6:  # Very close to original node
+                    coincident_node = node_id
+                    break
+
+            if coincident_node is not None:
+                # Use pre-computed radius for original skeleton nodes
+                radius = node_radii[coincident_node]
+                radius_strategy = "skeleton_node"
             else:
-                # Try cross-section first
-                poly2d = _cross_section_polygon_near_point(
+                # For resampled points, compute radius using the tangent direction
+                radius, radius_strategy = _compute_radius_for_tangent(
+                    point=P,
+                    tangent=tangent,
                     mesh=mesh,
-                    origin=P,
-                    normal=n,
+                    radius_strategy=options.radius_strategy,
                     eps=eps,
                     max_tries=int(options.section_probe_tries),
+                    V=V,
+                    v_kdtree=v_kdtree,
                 )
-                if poly2d is not None:
+
+                if "section" in radius_strategy:
                     used_section += 1
-                    area = float(poly2d.area)
-                    mode = str(options.radius_strategy)
-                    if mode == "equivalent_perimeter":
-                        perim = float(poly2d.exterior.length)
-                        radius = perim / (2.0 * math.pi) if perim > 0 else 0.0
-                        radius_strategy = "equivalent_perimeter"
-                    elif mode == "section_median":
-                        radius = _radius_from_section_median(poly2d)
-                        radius_strategy = "section_median"
-                    elif mode == "section_circle_fit":
-                        r_fit = _radius_from_section_circle_fit(poly2d)
-                        if not np.isfinite(r_fit) or r_fit <= 0:
-                            # conservative fallback to equivalent area
-                            radius = math.sqrt(area / math.pi) if area > 0 else 0.0
-                            radius_strategy = "equivalent_area_fallback"
-                        else:
-                            radius = float(r_fit)
-                            radius_strategy = "section_circle_fit"
-                    else:  # "equivalent_area" (default) or unknown => area-based
-                        radius = math.sqrt(area / math.pi) if area > 0 else 0.0
-                        radius_strategy = "equivalent_area"
-                else:
-                    # No section found; robust fallback = nearest surface distance
-                    area = 0.0
+                elif (
+                    "fallback" in radius_strategy
+                    or "nearest_surface" in radius_strategy
+                ):
                     used_fallback += 1
-                    radius = _nearest_surface_distance(P, mesh, V, v_kdtree)
-                    radius_strategy = "nearest_surface_fallback"
 
             total_samples += 1
             # Per-sample diagnostics (DEBUG)
@@ -494,6 +554,135 @@ def _resample_polyline(pl: np.ndarray, spacing: float) -> np.ndarray:
         out.append(Q)
 
     return np.vstack(out) if out else P[[0], :].copy()
+
+
+def _compute_node_tangents(skeleton: SkeletonGraph, node: int) -> List[np.ndarray]:
+    """
+    Compute tangent directions for a skeleton node based on its connected edges.
+
+    For terminal nodes (degree 1), returns a single tangent parallel to the connected edge.
+    For branch nodes (degree > 1), returns one tangent per connected edge.
+
+    Args:
+        skeleton: Input skeleton graph
+        node: Node ID to compute tangents for
+
+    Returns:
+        List of tangent direction vectors (unit length)
+    """
+    neighbors = list(skeleton.neighbors(node))
+    tangents = []
+
+    node_pos = skeleton.get_node_position(node)
+
+    for neighbor in neighbors:
+        neighbor_pos = skeleton.get_node_position(neighbor)
+        # Tangent points from node to neighbor
+        tangent = neighbor_pos - node_pos
+        norm = np.linalg.norm(tangent)
+        if norm > 1e-12:
+            tangents.append(tangent / norm)
+        else:
+            # Fallback for degenerate case
+            tangents.append(np.array([0.0, 0.0, 1.0], dtype=float))
+
+    return tangents
+
+
+def _compute_radius_for_tangent(
+    point: np.ndarray,
+    tangent: np.ndarray,
+    mesh: trimesh.Trimesh,
+    radius_strategy: str,
+    eps: float,
+    max_tries: int,
+    V: np.ndarray,
+    v_kdtree,
+) -> Tuple[float, str]:
+    """
+    Compute radius for a point using a specific tangent direction as the slicing plane normal.
+
+    Args:
+        point: 3D point position
+        tangent: Tangent direction (unit vector) used as plane normal
+        mesh: Mesh to intersect with
+        radius_strategy: Strategy for radius computation
+        eps: Epsilon for plane offset probing
+        max_tries: Maximum probe attempts
+        V: Mesh vertices array
+        v_kdtree: KD-tree for nearest surface queries
+
+    Returns:
+        Tuple of (radius, strategy_used)
+    """
+    # Use tangent as normal for cross-section plane
+    n = tangent
+
+    # Special case: explicitly request nearest surface distance
+    if radius_strategy == "nearest_surface":
+        radius = _nearest_surface_distance(point, mesh, V, v_kdtree)
+        return radius, "nearest_surface"
+
+    # Try cross-section first
+    poly2d = _cross_section_polygon_near_point(
+        mesh=mesh,
+        origin=point,
+        normal=n,
+        eps=eps,
+        max_tries=max_tries,
+    )
+
+    if poly2d is not None:
+        area = float(poly2d.area)
+        if radius_strategy == "equivalent_perimeter":
+            perim = float(poly2d.exterior.length)
+            radius = perim / (2.0 * math.pi) if perim > 0 else 0.0
+            return radius, "equivalent_perimeter"
+        elif radius_strategy == "section_median":
+            radius = _radius_from_section_median(poly2d)
+            return radius, "section_median"
+        elif radius_strategy == "section_circle_fit":
+            r_fit = _radius_from_section_circle_fit(poly2d)
+            if not np.isfinite(r_fit) or r_fit <= 0:
+                # conservative fallback to equivalent area
+                radius = math.sqrt(area / math.pi) if area > 0 else 0.0
+                return radius, "equivalent_area_fallback"
+            else:
+                radius = float(r_fit)
+                return radius, "section_circle_fit"
+        else:  # "equivalent_area" (default) or unknown => area-based
+            radius = math.sqrt(area / math.pi) if area > 0 else 0.0
+            return radius, "equivalent_area"
+    else:
+        # Fallback to nearest surface distance
+        radius = _nearest_surface_distance(point, mesh, V, v_kdtree)
+        return radius, "nearest_surface_fallback"
+
+
+def _reduce_multi_radii(radii: List[float], reduction: str) -> float:
+    """
+    Reduce multiple radius values to a single value using the specified method.
+
+    Args:
+        radii: List of radius values
+        reduction: Reduction method ("mean", "min", "max", "median")
+
+    Returns:
+        Reduced radius value
+    """
+    if not radii:
+        return 0.0
+
+    if reduction == "mean":
+        return np.mean(radii)
+    elif reduction == "min":
+        return np.min(radii)
+    elif reduction == "max":
+        return np.max(radii)
+    elif reduction == "median":
+        return np.median(radii)
+    else:
+        raise ValueError(f"Unknown reduction method: {reduction}")
 
 
 def _estimate_tangents(P: np.ndarray) -> np.ndarray:

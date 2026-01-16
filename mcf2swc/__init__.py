@@ -47,6 +47,10 @@ from .skeleton_optimizer import (  # noqa: E402
     SkeletonOptimizer,
     SkeletonOptimizerOptions,
 )
+from .parallel_skeleton_optimizer import (  # noqa: E402
+    ParallelSkeletonOptimizer,
+    ParallelOptimizerOptions,
+)
 
 __all__ = [
     "__version__",
@@ -64,4 +68,6 @@ __all__ = [
     # Skeleton optimization
     "SkeletonOptimizer",
     "SkeletonOptimizerOptions",
+    "ParallelSkeletonOptimizer",
+    "ParallelOptimizerOptions",
 ]
