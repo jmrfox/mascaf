@@ -565,8 +565,8 @@ def optimize_skeleton_radii(
         >>> from swctools import SWCModel
         >>> from mcf2swc.radius_optimizer import optimize_skeleton_radii, OptimizerOptions
         >>>
-        >>> # Build initial SWC model with trace.py
-        >>> swc_model = fit_swc(mesh, polylines)
+        >>> # Build initial SWC model with fit_morphology
+        >>> swc_model = fit_morphology(mesh, polylines)
         >>>
         >>> # Optimize radii
         >>> opts = OptimizerOptions(loss_function="surface_area", verbose=True)

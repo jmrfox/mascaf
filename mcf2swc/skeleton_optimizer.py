@@ -19,6 +19,7 @@ Key features:
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
@@ -29,6 +30,41 @@ from .polylines import PolylinesSkeleton
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
+
+
+def _optimize_polyline_worker(
+    polyline: np.ndarray,
+    poly_idx: int,
+    mesh: trimesh.Trimesh,
+    options: SkeletonOptimizerOptions,
+) -> np.ndarray:
+    """
+    Worker function for parallel polyline optimization.
+
+    This function is defined at module level so it can be pickled for multiprocessing.
+
+    Args:
+        polyline: (N, 3) array of points
+        poly_idx: Index of this polyline for logging
+        mesh: Target mesh
+        options: Optimization options
+
+    Returns:
+        Optimized (N, 3) array of points
+    """
+    # Handle empty polylines
+    if len(polyline) == 0:
+        return polyline.copy()
+
+    # Create a temporary optimizer instance to use its methods
+    # We can't pickle the full optimizer, but we can create one in the worker
+    from .polylines import PolylinesSkeleton
+
+    temp_skeleton = PolylinesSkeleton([polyline])
+    temp_optimizer = SkeletonOptimizer(temp_skeleton, mesh, options)
+
+    # Optimize this single polyline
+    return temp_optimizer._optimize_polyline(polyline, poly_idx)
 
 
 @dataclass
@@ -50,19 +86,17 @@ class SkeletonOptimizerOptions:
             polylines meet). Requires topology detection. Default: False
         branch_point_tolerance: Distance threshold for detecting branch points.
             Default: 1e-6
-        centering_method: Method for computing centering direction:
-            'closest_point' - move toward closest point on surface (simple)
-            'medial_axis' - equalize distances in perpendicular directions (better)
-            Default: 'medial_axis'
-        probe_distance: Fallback distance for medial axis centering when ray
-            tracing fails or finds no intersection. Also used as the default
-            return value for rays that don't hit the mesh. Default: 10.0
-        num_probe_directions: Number of directions to probe around the skeleton
-            tangent for medial axis centering. More directions = more robust but
-            slower. Must be >= 2. Default: 4 (samples at 0°, 90°, 180°, 270°)
+        n_rays: Number of evenly spaced rays to cast in 3D for distance sampling.
+            Uses Fibonacci sphere algorithm for uniform distribution. If set to 6,
+            uses axis-aligned rays (+/- x, y, z) for simpler debugging. Default: 6
+        fallback_distance: Distance to use when ray tracing fails to find an
+            intersection with the mesh. Default: 10.0
         smoothing_weight: Weight for smoothing regularization to maintain
             polyline smoothness (0 = no smoothing, 1 = strong smoothing).
             Default: 0.5
+        n_jobs: Number of parallel processes to use for optimizing polylines.
+            If 1, run sequentially. If -1, use all available CPU cores.
+            Default: 1 (sequential)
         verbose: If True, print optimization progress. Default: False
     """
 
@@ -73,10 +107,10 @@ class SkeletonOptimizerOptions:
     preserve_endpoints: bool = True
     preserve_branch_points: bool = False
     branch_point_tolerance: float = 1e-6
-    centering_method: str = "medial_axis"
-    probe_distance: float = 10.0
-    num_probe_directions: int = 4
+    n_rays: int = 6
+    fallback_distance: float = 10.0
     smoothing_weight: float = 0.5
+    n_jobs: int = 1
     verbose: bool = False
 
 
@@ -116,6 +150,7 @@ class SkeletonOptimizer:
 
         self._surface_crossing_detected = False
         self._optimization_history = []
+        self._branch_points = None  # Cache for branch point detection
 
     def check_surface_crossing(self) -> Tuple[bool, int, float]:
         """
@@ -180,7 +215,35 @@ class SkeletonOptimizer:
             logger.info("  Max iterations: %d", self.options.max_iterations)
             logger.info("  Step size: %.4f", self.options.step_size)
             logger.info("  Smoothing weight: %.4f", self.options.smoothing_weight)
+            logger.info("  Parallel jobs: %d", self.options.n_jobs)
 
+        # Determine number of workers
+        n_jobs = self.options.n_jobs
+        if n_jobs == -1:
+            import os
+
+            n_jobs = os.cpu_count() or 1
+
+        # Use parallel processing if n_jobs > 1 and we have multiple polylines
+        if n_jobs > 1 and len(self.skeleton.polylines) > 1:
+            optimized_polylines = self._optimize_parallel(n_jobs)
+        else:
+            optimized_polylines = self._optimize_sequential()
+
+        result = PolylinesSkeleton(optimized_polylines)
+
+        if self.options.verbose:
+            logger.info("Optimization complete")
+
+        return result
+
+    def _optimize_sequential(self) -> list:
+        """
+        Optimize polylines sequentially (original implementation).
+
+        Returns:
+            List of optimized polylines
+        """
         optimized_polylines = []
         for poly_idx, polyline in enumerate(self.skeleton.polylines):
             if len(polyline) == 0:
@@ -190,12 +253,56 @@ class SkeletonOptimizer:
             optimized = self._optimize_polyline(polyline, poly_idx)
             optimized_polylines.append(optimized)
 
-        result = PolylinesSkeleton(optimized_polylines)
+        return optimized_polylines
 
+    def _optimize_parallel(self, n_jobs: int) -> list:
+        """
+        Optimize polylines in parallel using multiprocessing.
+
+        Args:
+            n_jobs: Number of parallel workers
+
+        Returns:
+            List of optimized polylines
+        """
         if self.options.verbose:
-            logger.info("Optimization complete")
+            logger.info("  Using %d parallel workers", n_jobs)
 
-        return result
+        # Prepare tasks: (polyline_index, polyline_data)
+        tasks = []
+        for poly_idx, polyline in enumerate(self.skeleton.polylines):
+            tasks.append((poly_idx, polyline))
+
+        # Run optimization in parallel
+        optimized_polylines = [None] * len(tasks)
+
+        with ProcessPoolExecutor(max_workers=n_jobs) as executor:
+            # Submit all tasks
+            future_to_idx = {
+                executor.submit(
+                    _optimize_polyline_worker,
+                    polyline,
+                    poly_idx,
+                    self.mesh,
+                    self.options,
+                ): poly_idx
+                for poly_idx, polyline in tasks
+            }
+
+            # Collect results as they complete
+            for future in as_completed(future_to_idx):
+                poly_idx = future_to_idx[future]
+                try:
+                    optimized = future.result()
+                    optimized_polylines[poly_idx] = optimized
+                except Exception as exc:
+                    logger.error("Polyline %d optimization failed: %s", poly_idx, exc)
+                    # Fallback to original polyline
+                    optimized_polylines[poly_idx] = self.skeleton.polylines[
+                        poly_idx
+                    ].copy()
+
+        return optimized_polylines
 
     def _optimize_polyline(self, polyline: np.ndarray, poly_idx: int) -> np.ndarray:
         """
@@ -214,6 +321,11 @@ class SkeletonOptimizer:
         if n_points <= 1:
             return points
 
+        # Detect branch points if needed
+        if self.options.preserve_branch_points:
+            if self._branch_points is None:
+                self._branch_points = self._detect_branch_points()
+
         for iteration in range(self.options.max_iterations):
             points_old = points.copy()
 
@@ -221,12 +333,13 @@ class SkeletonOptimizer:
                 if self.options.preserve_endpoints and (i == 0 or i == n_points - 1):
                     continue
 
-                # Compute tangent for medial axis centering
-                tangent = None
-                if self.options.centering_method == "medial_axis":
-                    tangent = self._compute_tangent(points, i)
+                # Skip branch points if preserve_branch_points is True
+                if self.options.preserve_branch_points:
+                    if self._is_branch_point(poly_idx, i):
+                        continue
 
-                direction = self._compute_centering_direction(points[i], tangent)
+                # Compute centering direction using uniform 3D ray sampling
+                direction = self._compute_centering_direction(points[i])
 
                 smoothing_direction = np.zeros(3)
                 if self.options.smoothing_weight > 0 and n_points > 2:
@@ -257,31 +370,55 @@ class SkeletonOptimizer:
 
         return points
 
-    def _compute_centering_direction(
-        self, point: np.ndarray, tangent: Optional[np.ndarray] = None
-    ) -> np.ndarray:
+    def _compute_centering_direction(self, point: np.ndarray) -> np.ndarray:
         """
-        Compute the direction to move a point toward the mesh center.
+        Compute the direction to move a point toward the medial axis.
+
+        Uses uniform 3D ray sampling to find distances to the mesh surface
+        in all directions, then computes a force that equalizes these distances.
 
         Args:
             point: (3,) array representing a single point
-            tangent: Optional (3,) array representing the skeleton tangent at this point.
-                Required for 'medial_axis' centering method.
 
         Returns:
             (3,) array representing the direction to move (unit vector)
         """
-        if self.options.centering_method == "medial_axis":
-            return self._compute_medial_axis_direction(point, tangent)
-        else:
+        # Check if point is inside the mesh
+        is_inside = self.mesh.contains(point.reshape(1, 3))[0]
+        if not is_inside:
+            # Point is outside - move toward closest surface point
+            return self._compute_closest_point_direction(point)
+
+        try:
+            # Get uniformly distributed ray directions
+            directions = self._get_uniform_sphere_directions(self.options.n_rays)
+
+            # Compute force based on distance imbalance
+            force = np.zeros(3)
+            for direction in directions:
+                # Distance to surface in this direction
+                d = self._ray_distance_to_surface(point, direction)
+
+                # Force is inversely proportional to distance
+                # Points should move away from closer surfaces
+                # We use 1/d as the "pressure" from that direction
+                if d > 1e-6:
+                    force -= direction / d
+
+            # Normalize to unit vector
+            force_mag = np.linalg.norm(force)
+            if force_mag > 1e-10:
+                return force / force_mag
+            else:
+                return np.zeros(3)
+
+        except Exception as e:
+            logger.warning("Failed to compute centering direction: %s", e)
             return self._compute_closest_point_direction(point)
 
     def _compute_closest_point_direction(self, point: np.ndarray) -> np.ndarray:
         """
-        Simple centering: move toward/away from closest surface point.
-
-        For points outside: move toward the closest surface point
-        For points inside: move away from the closest surface point (toward center)
+        Fallback method for points outside the mesh: move toward closest surface point.
 
         Args:
             point: (3,) array representing a single point
@@ -292,7 +429,6 @@ class SkeletonOptimizer:
         try:
             from trimesh.proximity import closest_point
 
-            is_inside = self.mesh.contains(point.reshape(1, 3))[0]
             cp, _, _ = closest_point(self.mesh, point.reshape(1, 3))
             surface_point = cp[0]
 
@@ -302,110 +438,58 @@ class SkeletonOptimizer:
             if dist_to_surface < 1e-10:
                 return np.zeros(3)
 
-            if not is_inside:
-                direction = to_surface / dist_to_surface
-            else:
-                direction = -to_surface / dist_to_surface
-
-            return direction
+            return to_surface / dist_to_surface
 
         except Exception as e:
-            logger.warning("Failed to compute centering direction: %s", e)
+            logger.warning("Failed to compute closest point direction: %s", e)
             return np.zeros(3)
 
-    def _compute_medial_axis_direction(
-        self, point: np.ndarray, tangent: Optional[np.ndarray]
-    ) -> np.ndarray:
+    def _get_uniform_sphere_directions(self, n_points: int) -> np.ndarray:
         """
-        Medial axis centering: equalize distances in perpendicular directions.
+        Generate uniformly distributed points on a unit sphere using Fibonacci spiral.
 
-        At the true medial axis, distances to the surface should be equal in all
-        directions perpendicular to the skeleton tangent. This method:
-        1. Computes perpendicular axes to the tangent
-        2. Uses ray tracing to find exact distances to surface in multiple directions
-        3. Computes a force to equalize these distances
+        This gives approximately evenly spaced directions in 3D space.
+        Special case: if n_points=6, uses exact axis-aligned rays (+/- x, y, z).
 
         Args:
-            point: (3,) array representing a single point
-            tangent: (3,) array representing the skeleton tangent direction
+            n_points: Number of points to generate
 
         Returns:
-            (3,) array representing the direction to move
+            (n_points, 3) array of unit direction vectors
         """
-        if tangent is None:
-            # Fallback to simple method if no tangent provided
-            return self._compute_closest_point_direction(point)
+        # Special case: axis-aligned rays for debugging
+        if n_points == 6:
+            return np.array(
+                [
+                    [1.0, 0.0, 0.0],  # +X
+                    [-1.0, 0.0, 0.0],  # -X
+                    [0.0, 1.0, 0.0],  # +Y
+                    [0.0, -1.0, 0.0],  # -Y
+                    [0.0, 0.0, 1.0],  # +Z
+                    [0.0, 0.0, -1.0],  # -Z
+                ]
+            )
 
-        try:
-            # Compute two perpendicular axes to the tangent
-            perp1, perp2 = self._compute_perpendicular_axes(tangent)
+        indices = np.arange(0, n_points, dtype=float) + 0.5
 
-            # Sample at multiple angles around the tangent
-            n_dirs = max(2, self.options.num_probe_directions)
+        # Golden ratio
+        phi = (1 + np.sqrt(5)) / 2
 
-            # Sample at evenly spaced angles around the tangent
-            # Each direction is a linear combination of perp1 and perp2
-            force = np.zeros(3)
+        # Fibonacci sphere algorithm
+        theta = 2 * np.pi * indices / phi
+        z = 1 - (2 * indices / n_points)
+        radius = np.sqrt(1 - z * z)
 
-            for i in range(n_dirs):
-                # Angle in radians
-                angle = 2.0 * np.pi * i / n_dirs
+        x = radius * np.cos(theta)
+        y = radius * np.sin(theta)
 
-                # Direction vector in the plane perpendicular to tangent
-                direction = np.cos(angle) * perp1 + np.sin(angle) * perp2
+        directions = np.column_stack([x, y, z])
 
-                # Use ray tracing to find distance to surface in positive direction
-                d_pos = self._ray_distance_to_surface(point, direction)
+        # Normalize to ensure unit vectors (should already be, but for numerical stability)
+        norms = np.linalg.norm(directions, axis=1, keepdims=True)
+        directions = directions / (norms + 1e-10)
 
-                # Use ray tracing to find distance to surface in negative direction
-                d_neg = self._ray_distance_to_surface(point, -direction)
-
-                # Compute force along this direction
-                # If d_pos > d_neg, move in positive direction (away from closer surface)
-                diff = d_pos - d_neg
-                force += diff * direction
-
-            # Normalize to unit vector
-            force_mag = np.linalg.norm(force)
-            if force_mag > 1e-10:
-                return force / force_mag
-            else:
-                return np.zeros(3)
-
-        except Exception as e:
-            logger.warning("Failed to compute medial axis direction: %s", e)
-            return self._compute_closest_point_direction(point)
-
-    def _compute_tangent(self, points: np.ndarray, index: int) -> np.ndarray:
-        """
-        Compute the tangent direction at a point along the polyline.
-
-        Args:
-            points: (N, 3) array of all points in the polyline
-            index: Index of the current point
-
-        Returns:
-            (3,) array representing the tangent direction (unit vector)
-        """
-        n = len(points)
-        if n < 2:
-            return np.array([1.0, 0.0, 0.0])  # Default direction
-
-        if index == 0:
-            # Use forward difference
-            tangent = points[1] - points[0]
-        elif index == n - 1:
-            # Use backward difference
-            tangent = points[n - 1] - points[n - 2]
-        else:
-            # Use central difference
-            tangent = points[index + 1] - points[index - 1]
-
-        tangent_mag = np.linalg.norm(tangent)
-        if tangent_mag > 1e-10:
-            return tangent / tangent_mag
-        else:
-            return np.array([1.0, 0.0, 0.0])
+        return directions
 
     def _ray_distance_to_surface(
         self, point: np.ndarray, direction: np.ndarray
@@ -437,7 +521,7 @@ class SkeletonOptimizer:
                 # No intersection found - use fallback distance
                 if self.options.verbose:
                     logger.debug("Ray found no intersection, using fallback distance")
-                return self.options.probe_distance
+                return self.options.fallback_distance
 
             # Find the closest intersection point
             distances = np.linalg.norm(locations - point, axis=1)
@@ -453,44 +537,8 @@ class SkeletonOptimizer:
             return min_dist
 
         except Exception as e:
-            logger.warning("Ray tracing failed, falling back to probe method: %s", e)
-            # Fallback to probe distance method
-            from trimesh.proximity import closest_point
-
-            probe_pos = point + self.options.probe_distance * direction
-            cp, _, _ = closest_point(self.mesh, probe_pos.reshape(1, 3))
-            return np.linalg.norm(cp[0] - point)
-
-    def _compute_perpendicular_axes(
-        self, tangent: np.ndarray
-    ) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Compute two orthonormal axes perpendicular to the tangent.
-
-        Args:
-            tangent: (3,) array representing the tangent direction (should be normalized)
-
-        Returns:
-            Tuple of two (3,) arrays representing perpendicular axes
-        """
-        # Normalize tangent
-        t = tangent / (np.linalg.norm(tangent) + 1e-10)
-
-        # Find a vector not parallel to tangent
-        if abs(t[0]) < 0.9:
-            v = np.array([1.0, 0.0, 0.0])
-        else:
-            v = np.array([0.0, 1.0, 0.0])
-
-        # First perpendicular axis using cross product
-        perp1 = np.cross(t, v)
-        perp1 = perp1 / (np.linalg.norm(perp1) + 1e-10)
-
-        # Second perpendicular axis
-        perp2 = np.cross(t, perp1)
-        perp2 = perp2 / (np.linalg.norm(perp2) + 1e-10)
-
-        return perp1, perp2
+            logger.warning("Ray tracing failed, using fallback distance: %s", e)
+            return self.options.fallback_distance
 
     def _compute_smoothing_direction(
         self, points: np.ndarray, index: int
@@ -521,6 +569,56 @@ class SkeletonOptimizer:
         if norm > 1e-10:
             return direction / norm
         return np.zeros(3)
+
+    def _detect_branch_points(self) -> set:
+        """
+        Detect branch points where 3+ polylines meet.
+
+        Returns:
+            Set of (polyline_idx, point_idx) tuples for branch points
+        """
+        branch_points = set()
+        tolerance = self.options.branch_point_tolerance
+
+        # Collect all endpoints (potential branch points)
+        all_points = []
+        for poly_idx, polyline in enumerate(self.skeleton.polylines):
+            if len(polyline) > 0:
+                all_points.append((poly_idx, 0, polyline[0]))  # First point
+                all_points.append(
+                    (poly_idx, len(polyline) - 1, polyline[-1])
+                )  # Last point
+
+        # Check for points that are close to each other
+        for i, (poly_i, idx_i, pt_i) in enumerate(all_points):
+            close_points = [(poly_i, idx_i)]
+            for j, (poly_j, idx_j, pt_j) in enumerate(all_points):
+                if i != j:
+                    dist = np.linalg.norm(pt_i - pt_j)
+                    if dist < tolerance:
+                        close_points.append((poly_j, idx_j))
+
+            # If 3+ points are close together, mark them as branch points
+            if len(close_points) >= 3:
+                for poly_idx, pt_idx in close_points:
+                    branch_points.add((poly_idx, pt_idx))
+
+        return branch_points
+
+    def _is_branch_point(self, poly_idx: int, point_idx: int) -> bool:
+        """
+        Check if a point is a branch point.
+
+        Args:
+            poly_idx: Index of the polyline
+            point_idx: Index of the point within the polyline
+
+        Returns:
+            True if the point is a branch point
+        """
+        if self._branch_points is None:
+            return False
+        return (poly_idx, point_idx) in self._branch_points
 
     def get_optimization_stats(self) -> dict:
         """

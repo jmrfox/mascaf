@@ -5,7 +5,7 @@ Main mesh class
 import logging
 import multiprocessing
 import traceback
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import trimesh
@@ -545,8 +545,10 @@ class MeshManager:
         width: int = 800,
         height: int = 600,
         *,
-        polylines: Optional["PolylinesSkeleton"] = None,
-        poly_color: str = "crimson",
+        polylines: Optional[
+            Union["PolylinesSkeleton", List["PolylinesSkeleton"]]
+        ] = None,
+        poly_color: Union[str, List[str]] = "crimson",
         poly_line_width: float = 3.0,
         poly_opacity: float = 0.95,
     ) -> Optional[object]:
@@ -559,8 +561,8 @@ class MeshManager:
             backend: Visualization backend ('plotly' or 'matplotlib')
             show_axes: Whether to show coordinate axes
             show_wireframe: Whether to show wireframe overlay
-            polylines: Optional PolylinesSkeleton to overlay as 3D lines
-            poly_color: Color for polylines overlay
+            polylines: Optional PolylinesSkeleton or list of PolylinesSkeleton to overlay as 3D lines
+            poly_color: Color(s) for polylines overlay. Can be a single color or list of colors (one per skeleton)
             poly_line_width: Line width for polylines overlay
             poly_opacity: Opacity for polylines overlay (plotly only)
 
@@ -616,8 +618,10 @@ class MeshManager:
         width=800,
         height=600,
         *,
-        polylines: Optional["PolylinesSkeleton"] = None,
-        poly_color: str = "crimson",
+        polylines: Optional[
+            Union["PolylinesSkeleton", List["PolylinesSkeleton"]]
+        ] = None,
+        poly_color: Union[str, List[str]] = "crimson",
         poly_line_width: float = 3.0,
         poly_opacity: float = 0.95,
     ):
@@ -666,26 +670,47 @@ class MeshManager:
                 )
 
             # Add polylines overlay if provided
-            if polylines is not None and hasattr(polylines, "polylines"):
-                for idx, pl in enumerate(polylines.polylines):
-                    if pl is None:
-                        continue
-                    pts = np.asarray(pl, dtype=float)
-                    if pts.ndim == 2 and pts.shape[1] >= 3 and pts.shape[0] >= 2:
-                        fig.add_trace(
-                            go.Scatter3d(
-                                x=pts[:, 0],
-                                y=pts[:, 1],
-                                z=pts[:, 2],
-                                mode="lines",
-                                line=dict(
-                                    color=poly_color, width=float(poly_line_width)
-                                ),
-                                opacity=float(poly_opacity),
-                                name=f"Polyline {idx}",
-                                showlegend=False,
-                            )
+            if polylines is not None:
+                # Normalize to list of PolylinesSkeleton
+                if hasattr(polylines, "polylines"):
+                    polylines_list = [polylines]
+                else:
+                    polylines_list = polylines
+
+                # Normalize colors to list
+                if isinstance(poly_color, str):
+                    colors = [poly_color] * len(polylines_list)
+                else:
+                    colors = poly_color
+                    if len(colors) < len(polylines_list):
+                        colors = list(colors) + [colors[-1]] * (
+                            len(polylines_list) - len(colors)
                         )
+
+                # Add each skeleton
+                for skel_idx, skeleton in enumerate(polylines_list):
+                    if skeleton is None or not hasattr(skeleton, "polylines"):
+                        continue
+                    skel_color = colors[skel_idx]
+                    for idx, pl in enumerate(skeleton.polylines):
+                        if pl is None:
+                            continue
+                        pts = np.asarray(pl, dtype=float)
+                        if pts.ndim == 2 and pts.shape[1] >= 3 and pts.shape[0] >= 2:
+                            fig.add_trace(
+                                go.Scatter3d(
+                                    x=pts[:, 0],
+                                    y=pts[:, 1],
+                                    z=pts[:, 2],
+                                    mode="lines",
+                                    line=dict(
+                                        color=skel_color, width=float(poly_line_width)
+                                    ),
+                                    opacity=float(poly_opacity),
+                                    name=f"Skeleton {skel_idx}, Polyline {idx}",
+                                    showlegend=False,
+                                )
+                            )
 
             # Configure layout
             fig.update_layout(
@@ -717,8 +742,10 @@ class MeshManager:
         show_axes,
         show_wireframe,
         *,
-        polylines: Optional["PolylinesSkeleton"] = None,
-        poly_color: str = "crimson",
+        polylines: Optional[
+            Union["PolylinesSkeleton", List["PolylinesSkeleton"]]
+        ] = None,
+        poly_color: Union[str, List[str]] = "crimson",
         poly_line_width: float = 3.0,
     ):
         """Matplotlib-based mesh visualization with optional polylines overlay."""
@@ -742,19 +769,40 @@ class MeshManager:
             ax.add_collection3d(poly3d)
 
             # Add polylines overlay if provided
-            if polylines is not None and hasattr(polylines, "polylines"):
-                for pl in polylines.polylines:
-                    if pl is None:
-                        continue
-                    pts = np.asarray(pl, dtype=float)
-                    if pts.ndim == 2 and pts.shape[1] >= 3 and pts.shape[0] >= 2:
-                        ax.plot(
-                            pts[:, 0],
-                            pts[:, 1],
-                            pts[:, 2],
-                            color=poly_color,
-                            linewidth=float(poly_line_width),
+            if polylines is not None:
+                # Normalize to list of PolylinesSkeleton
+                if hasattr(polylines, "polylines"):
+                    polylines_list = [polylines]
+                else:
+                    polylines_list = polylines
+
+                # Normalize colors to list
+                if isinstance(poly_color, str):
+                    colors = [poly_color] * len(polylines_list)
+                else:
+                    colors = poly_color
+                    if len(colors) < len(polylines_list):
+                        colors = list(colors) + [colors[-1]] * (
+                            len(polylines_list) - len(colors)
                         )
+
+                # Add each skeleton
+                for skel_idx, skeleton in enumerate(polylines_list):
+                    if skeleton is None or not hasattr(skeleton, "polylines"):
+                        continue
+                    skel_color = colors[skel_idx]
+                    for pl in skeleton.polylines:
+                        if pl is None:
+                            continue
+                        pts = np.asarray(pl, dtype=float)
+                        if pts.ndim == 2 and pts.shape[1] >= 3 and pts.shape[0] >= 2:
+                            ax.plot(
+                                pts[:, 0],
+                                pts[:, 1],
+                                pts[:, 2],
+                                color=skel_color,
+                                linewidth=float(poly_line_width),
+                            )
 
             ax.set_xlim(vertices[:, 0].min(), vertices[:, 0].max())
             ax.set_ylim(vertices[:, 1].min(), vertices[:, 1].max())

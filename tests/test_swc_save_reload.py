@@ -5,8 +5,8 @@ import numpy as np
 
 from mcf2swc import (
     example_mesh,
-    fit_swc,
-    SWCFitOptions,
+    fit_morphology,
+    FitOptions,
     PolylinesSkeleton,
     SWCModel,
 )
@@ -21,20 +21,20 @@ def test_swc_save_reload_preserves_edges():
     mesh = example_mesh("cylinder")
     pls = PolylinesSkeleton.from_txt(str(DATA / "cylinder.polylines.txt"))
 
-    opts = SWCFitOptions(spacing=1.0, radius_strategy="equivalent_area")
-    model_original = fit_swc(mesh, pls, options=opts)
+    opts = FitOptions(spacing=1.0, radius_strategy="equivalent_area")
+    morph_graph = fit_morphology(mesh, pls, options=opts)
 
-    assert model_original.number_of_nodes() > 0, "Original model has no nodes"
-    assert model_original.number_of_edges() > 0, "Original model has no edges"
+    assert morph_graph.number_of_nodes() > 0, "Original graph has no nodes"
+    assert morph_graph.number_of_edges() > 0, "Original graph has no edges"
 
-    original_nodes = model_original.number_of_nodes()
-    original_edges = model_original.number_of_edges()
+    original_nodes = morph_graph.number_of_nodes()
+    original_edges = morph_graph.number_of_edges()
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".swc", delete=False) as f:
         temp_path = f.name
 
     try:
-        model_original.to_swc_file(temp_path)
+        morph_graph.to_swc_file(temp_path)
 
         model_reloaded = SWCModel.from_swc_file(temp_path)
 
