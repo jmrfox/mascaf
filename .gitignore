@@ -148,9 +148,3 @@ cython_debug/
 .DS_Store
 Thumbs.db
 
-# Project specific
-data/
-*.h5
-*.hdf5
-*.npy
-*.npz
