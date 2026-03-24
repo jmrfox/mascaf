@@ -51,6 +51,9 @@ from .parallel_skeleton_optimizer import (  # noqa: E402
     ParallelSkeletonOptimizer,
     ParallelOptimizerOptions,
 )
+from .validation import (  # noqa: E402
+    Validation,
+)
 
 __all__ = [
     "__version__",
@@ -70,4 +73,6 @@ __all__ = [
     "SkeletonOptimizerOptions",
     "ParallelSkeletonOptimizer",
     "ParallelOptimizerOptions",
+    # Validation
+    "Validation",
 ]
