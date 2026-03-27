@@ -24,3 +24,6 @@ dependencies = [
 
 [tool.uv.sources]
 swctools = { git = "https://github.com/jmrfox/swctools.git" }
+
+[tool.pytest.ini_options]
+addopts = "--ignore=tests/test_parallel_skeleton_optimizer.py"

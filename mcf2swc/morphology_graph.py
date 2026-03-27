@@ -65,7 +65,7 @@ class MorphologyGraph(nx.Graph):
         >>> graph.print_attributes()
         """
         # Load SWC file using swctools
-        swc_model = SWCModel.from_swc(path)
+        swc_model = SWCModel.from_swc_file(path)
 
         # Parse header comments for CYCLE_BREAK annotations
         cycle_breaks = []  # List of (duplicate_id, original_id) tuples
@@ -92,17 +92,19 @@ class MorphologyGraph(nx.Graph):
         graph = cls()
 
         # Add all nodes from SWC model
-        for node in swc_model:
+        for node_id in swc_model.nodes():
+            node_data = swc_model.nodes[node_id]
             graph.add_node(
-                int(node.id),
-                xyz=np.array([node.x, node.y, node.z], dtype=float),
-                radius=float(node.radius),
+                int(node_id),
+                xyz=np.array(
+                    [node_data["x"], node_data["y"], node_data["z"]], dtype=float
+                ),
+                radius=float(node_data["r"]),
             )
 
-        # Add edges based on parent relationships
-        for node in swc_model:
-            if node.parent_id != -1:
-                graph.add_edge(int(node.id), int(node.parent_id))
+        # Add edges from SWC model (already undirected in SWCModel)
+        for u, v in swc_model.edges():
+            graph.add_edge(int(u), int(v))
 
         # Restore cycles by reconnecting duplicates to originals
         for dup_id, orig_id in cycle_breaks:
@@ -137,6 +139,172 @@ class MorphologyGraph(nx.Graph):
             xyz=j.xyz,
             radius=float(j.radius),
         )
+
+    def to_swc_model(self) -> SWCModel:
+        """Convert MorphologyGraph to a SWCModel instance.
+
+        Creates a SWCModel by adding all nodes with their attributes
+        (x, y, z, r, t) and edges from this graph. Note that SWCModel
+        is also a NetworkX Graph, so this is a conversion between
+        graph types.
+
+        Returns
+        -------
+        SWCModel
+            A SWCModel instance with the same topology and attributes.
+
+        Examples
+        --------
+        >>> graph = MorphologyGraph()
+        >>> # ... add nodes and edges ...
+        >>> swc_model = graph.to_swc_model()
+        >>> frusta = FrustaSet.from_swc_model(swc_model)
+        """
+        swc_model = SWCModel()
+
+        # Add all nodes with required SWC attributes
+        for node_id, attrs in self.nodes(data=True):
+            xyz = attrs.get("xyz", np.array([0.0, 0.0, 0.0]))
+            radius = attrs.get("radius", 1.0)
+            # SWC type: default to 3 (dendrite)
+            swc_type = attrs.get("t", 3)
+
+            swc_model.add_node(
+                int(node_id),
+                x=float(xyz[0]),
+                y=float(xyz[1]),
+                z=float(xyz[2]),
+                r=float(radius),
+                t=int(swc_type),
+            )
+
+        # Add all edges
+        for u, v in self.edges():
+            swc_model.add_edge(int(u), int(v))
+
+        return swc_model
+
+    def compute_volume(self, remove_overlaps=False) -> float:
+        """Compute total volume of the morphology as sum of frustum segments.
+
+        Each edge represents a truncated cone (frustum) connecting two nodes.
+        The volume of a frustum is: V = (π*h/3) * (r1² + r1*r2 + r2²)
+        where h is the length and r1, r2 are the radii at the endpoints.
+
+        For nodes with degree > 2 (branch points), overlap correction is applied
+        by subtracting one ball volume per edge beyond 2.
+
+        Parameters
+        ----------
+        remove_overlaps : bool, default False
+            If True, remove overlap correction for branch points.
+
+        Returns
+        -------
+        float
+            Total volume of all segments in the morphology.
+
+        Examples
+        --------
+        >>> graph = MorphologyGraph()
+        >>> # ... add nodes and edges ...
+        >>> volume = graph.compute_volume()
+        """
+        total_volume = 0.0
+
+        # Add frustum volumes for all edges
+        for u, v in self.edges():
+            # Get node attributes
+            xyz_u = self.nodes[u]["xyz"]
+            xyz_v = self.nodes[v]["xyz"]
+            r_u = self.nodes[u]["radius"]
+            r_v = self.nodes[v]["radius"]
+
+            # Compute segment length
+            h = np.linalg.norm(xyz_v - xyz_u)
+
+            # Volume of truncated cone
+            vol = (np.pi * h / 3.0) * (r_u**2 + r_u * r_v + r_v**2)
+            total_volume += vol
+
+        # Subtract overlap correction for branch points (degree > 2)
+        for node_id in self.nodes():
+            degree = self.degree[node_id]
+            if degree > 2 and remove_overlaps:
+                r = self.nodes[node_id]["radius"]
+                # Subtract one ball volume per edge beyond 2
+                num_overlaps = degree - 2
+                # model overlap as a cylinder with radius r and length r
+                overlap_volume = np.pi * r**3
+                total_volume -= num_overlaps * overlap_volume
+
+        return total_volume
+
+    def compute_surface_area(self, remove_overlaps=False) -> float:
+        """Compute total lateral surface area of the morphology.
+
+        Each edge represents a truncated cone (frustum) connecting two nodes.
+        The lateral surface area is: A = π * (r1 + r2) * s
+        where s = sqrt(h² + (r1 - r2)²) is the slant height.
+
+        End caps are added for terminal nodes (degree 1).
+        For nodes with degree > 2 (branch points), overlap correction is applied
+        by subtracting one ball surface area per edge beyond 2.
+
+        Parameters
+        ----------
+        remove_overlaps : bool, default False
+            If True, remove overlap correction for branch points.
+
+        Returns
+        -------
+        float
+            Total lateral surface area of all segments in the morphology.
+
+        Examples
+        --------
+        >>> graph = MorphologyGraph()
+        >>> # ... add nodes and edges ...
+        >>> area = graph.compute_surface_area()
+        """
+        total_area = 0.0
+
+        # Add lateral surface area of all segments
+        for u, v in self.edges():
+            # Get node attributes
+            xyz_u = self.nodes[u]["xyz"]
+            xyz_v = self.nodes[v]["xyz"]
+            r_u = self.nodes[u]["radius"]
+            r_v = self.nodes[v]["radius"]
+
+            # Compute segment length
+            h = np.linalg.norm(xyz_v - xyz_u)
+
+            # Slant height
+            s = np.sqrt(h**2 + (r_u - r_v) ** 2)
+
+            # Lateral surface area of truncated cone
+            lateral_area = np.pi * (r_u + r_v) * s
+            total_area += lateral_area
+
+        # Process nodes for end caps and overlap correction
+        for node_id in self.nodes():
+            degree = self.degree[node_id]
+            r = self.nodes[node_id]["radius"]
+
+            if degree == 1:
+                # Add end cap area for terminal nodes
+                cap_area = np.pi * r**2
+                total_area += cap_area
+            elif degree > 2 and remove_overlaps:
+                # Subtract overlap correction for branch points
+                # One ball surface area per edge beyond 2
+                num_overlaps = degree - 2
+                # model overlap as a cylinder with radius r and length r
+                overlap_area = 2.0 * np.pi * r**2
+                total_area -= num_overlaps * overlap_area
+
+        return total_area
 
     def print_attributes(
         self, *, node_info: bool = False, edge_info: bool = False

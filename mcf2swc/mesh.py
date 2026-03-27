@@ -64,8 +64,9 @@ def example_mesh(
     >>> t = example_mesh("torus", major_radius=1.0, minor_radius=0.25)
     """
     k = (kind or "cylinder").lower()
+    out = None
     if k == "cylinder":
-        return trimesh.creation.cylinder(
+        out = trimesh.creation.cylinder(
             radius=float(radius),
             height=float(height),
             sections=None if sections is None else int(sections),
@@ -73,15 +74,23 @@ def example_mesh(
         )
     elif k == "torus":
         # trimesh.creation.torus parameters
-        return trimesh.creation.torus(
+        out = trimesh.creation.torus(
             major_radius=float(major_radius),
             minor_radius=float(minor_radius),
             major_sections=None if major_sections is None else int(major_sections),
             minor_sections=None if minor_sections is None else int(minor_sections),
             **kwargs,
         )
+        # Rotate torus 90 degrees, so it's standing on its side
+        out.apply_transform(
+            trimesh.transformations.rotation_matrix(
+                angle=np.pi / 2, direction=[1, 0, 0], point=out.centroid
+            )
+        )
     else:
         raise ValueError("example_mesh kind must be 'cylinder' or 'torus'")
+
+    return out
 
 
 class MeshManager:

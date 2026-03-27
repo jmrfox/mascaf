@@ -7,6 +7,7 @@ from mcf2swc import (
     fit_morphology,
     FitOptions,
     SkeletonGraph,
+    Validation,
 )
 
 
@@ -15,6 +16,7 @@ DATA = ROOT / "data" / "demo"
 
 
 def test_cylinder_trace_non_empty():
+    """Test cylinder trace and perform validation."""
     mesh = example_mesh("cylinder")
 
     skel = SkeletonGraph.from_txt(str(DATA / "cylinder.polylines.txt"))
@@ -27,8 +29,16 @@ def test_cylinder_trace_non_empty():
     assert G.number_of_nodes() > 0, "Cylinder trace produced no nodes"
     assert G.number_of_edges() > 0, "Cylinder trace produced no edges"
 
+    # Perform validation
+    validator = Validation(mesh, skel, G)
+    vol_result = validator.compare_volumes()
+    area_result = validator.compare_surface_areas()
+    assert vol_result["relative_error"] < 0.05
+    assert area_result["relative_error"] < 0.05
+
 
 def test_torus_trace_non_empty():
+    """Test torus trace and perform validation."""
     mesh = example_mesh("torus")
 
     skel = SkeletonGraph.from_txt(str(DATA / "torus.polylines.txt"))
@@ -40,3 +50,10 @@ def test_torus_trace_non_empty():
 
     assert G.number_of_nodes() > 0, "Torus trace produced no nodes"
     assert G.number_of_edges() > 0, "Torus trace produced no edges"
+
+    # Perform validation
+    validator = Validation(mesh, skel, G)
+    vol_result = validator.compare_volumes()
+    area_result = validator.compare_surface_areas()
+    assert vol_result["relative_error"] < 0.05
+    assert area_result["relative_error"] < 0.05

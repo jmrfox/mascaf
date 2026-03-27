@@ -134,21 +134,26 @@ class Validation:
             f")"
         )
 
-    def compare_volumes(self) -> dict:
+    def compare_volumes(self, remove_overlaps=False) -> dict:
         """
-        Compare total volume between mesh and SWC model.
+        Compare total volume between mesh and morphology model.
 
-        Computes the mesh volume using trimesh and the SWC volume by summing
-        truncated cone volumes for each edge.
+        Computes the mesh volume using trimesh and the morphology volume
+        by summing truncated cone volumes for each edge segment.
+
+        Parameters
+        ----------
+        remove_overlaps : bool, default False
+            If True, remove overlap correction for branch points.
 
         Returns
         -------
         dict
             Dictionary containing:
             - 'mesh_volume': float, volume of the mesh
-            - 'swc_volume': float, volume of the SWC model
-            - 'ratio': float, swc_volume / mesh_volume
-            - 'absolute_difference': float, abs(swc_volume - mesh_volume)
+            - 'morphology_volume': float, volume of the morphology model
+            - 'ratio': float, morphology_volume / mesh_volume
+            - 'absolute_difference': float, |morphology_volume - mesh_volume|
             - 'relative_error': float, abs difference / mesh_volume
 
         Examples
@@ -156,18 +161,81 @@ class Validation:
         >>> result = validator.compare_volumes()
         >>> print(f"Volume ratio: {result['ratio']:.3f}")
         """
-        raise NotImplementedError("compare_volumes not yet implemented")
+        # Get mesh volume
+        mesh_volume = float(self.mesh.volume)
 
-    def compare_surface_areas(self) -> dict:
+        if not mesh_volume > 0.0:
+            raise ValueError("Mesh has zero volume.")
+
+        # Calculate morphology volume using MorphologyGraph method
+        morphology_volume = self.morphology.compute_volume(
+            remove_overlaps=remove_overlaps
+        )
+
+        # Calculate comparison metrics
+        ratio = morphology_volume / mesh_volume
+        error = morphology_volume - mesh_volume
+        rel_error = error / mesh_volume
+
+        return {
+            "mesh_volume": mesh_volume,
+            "morphology_volume": morphology_volume,
+            "ratio": ratio,
+            "error": error,
+            "relative_error": rel_error,
+        }
+
+    def compare_surface_areas(self, remove_overlaps=False) -> dict:
         """
-        Compare total surface area between mesh and SWC model.
+        Compare total surface area between mesh and morphology model.
+
+        Computes the mesh surface area using trimesh and the morphology
+        surface area by summing lateral surface areas of truncated cones
+        for each edge segment.
+
+        Parameters
+        ----------
+        remove_overlaps : bool, default False
+            If True, remove overlap correction for branch points.
 
         Returns
         -------
         dict
-            Dictionary containing surface area comparison metrics.
+            Dictionary containing:
+            - 'mesh_area': float, surface area of the mesh
+            - 'morphology_area': float, surface area of the morphology model
+            - 'ratio': float, morphology_area / mesh_area
+            - 'error': float, morphology_area - mesh_area
+            - 'relative_error': float, error / mesh_area
+
+        Examples
+        --------
+        >>> result = validator.compare_surface_areas()
+        >>> print(f"Surface area ratio: {result['ratio']:.3f}")
         """
-        raise NotImplementedError("compare_surface_areas not yet implemented")
+        # Get mesh surface area
+        mesh_area = float(self.mesh.area)
+
+        if not mesh_area > 0.0:
+            raise ValueError("Mesh has zero area.")
+
+        # Calculate morphology surface area using MorphologyGraph method
+        morphology_area = self.morphology.compute_surface_area(
+            remove_overlaps=remove_overlaps
+        )
+
+        # Calculate comparison metrics
+        ratio = morphology_area / mesh_area
+        error = morphology_area - mesh_area
+        rel_error = error / mesh_area
+
+        return {
+            "mesh_area": mesh_area,
+            "morphology_area": morphology_area,
+            "ratio": ratio,
+            "error": error,
+            "relative_error": rel_error,
+        }
 
     def validate_radii(self) -> dict:
         """

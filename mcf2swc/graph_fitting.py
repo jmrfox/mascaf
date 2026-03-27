@@ -225,14 +225,14 @@ def fit_morphology(
                 project_outside_only=True,
                 max_distance=options.max_snap_distance,
             )
-            logger.info(
+            logger.debug(
                 "Skeleton snapped to mesh surface: moved=%d, mean=%.4g", moved, mean
             )
         except Exception as e:
             logger.warning("Failed snapping skeleton to mesh: %s", e)
 
     # Start logging summary
-    logger.info(
+    logger.debug(
         "Tracing start: mesh[V=%d,F=%d], skeleton[nodes=%d,edges=%d], spacing=%.3g, radius_strategy=%s",
         len(mesh.vertices),
         len(mesh.faces),
@@ -333,7 +333,7 @@ def fit_morphology(
 
         # Resample the path
         samples = _resample_polyline(pl, float(options.spacing))
-        logger.info(
+        logger.debug(
             "Edge group %d: input_pts=%d -> samples=%d",
             int(pl_index),
             int(pl.shape[0]),
@@ -491,7 +491,7 @@ def fit_morphology(
 
     # Final summary
     try:
-        logger.info(
+        logger.debug(
             "Tracing done: nodes=%d, edges=%d, samples=%d, section=%d, fallback=%d",
             int(graph.number_of_nodes()),
             int(graph.number_of_edges()),
