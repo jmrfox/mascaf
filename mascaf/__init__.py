@@ -47,10 +47,6 @@ from .skeleton_optimizer import (  # noqa: E402
     SkeletonOptimizer,
     SkeletonOptimizerOptions,
 )
-from .parallel_skeleton_optimizer import (  # noqa: E402
-    ParallelSkeletonOptimizer,
-    ParallelOptimizerOptions,
-)
 from .validation import (  # noqa: E402
     Validation,
 )
@@ -71,8 +67,6 @@ __all__ = [
     # Skeleton optimization
     "SkeletonOptimizer",
     "SkeletonOptimizerOptions",
-    "ParallelSkeletonOptimizer",
-    "ParallelOptimizerOptions",
     # Validation
     "Validation",
 ]

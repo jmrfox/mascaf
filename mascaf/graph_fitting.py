@@ -62,8 +62,9 @@ class FitOptions:
     sections (or from the surface directly).
 
     Attributes:
-        spacing: Sampling step along polylines in mesh units. Resampling keeps
-            endpoints and inserts additional samples at approximately fixed arc-length.
+        max_edge_length: Maximum edge length along polylines in mesh units.
+            Resampling keeps endpoints and distributes intermediate samples to
+            create segments no longer than this value.
         radius_strategy: Strategy for estimating node radii at each sample. One of:
             - "equivalent_area" (default): r = sqrt(A/pi) using cross-section area.
             - "equivalent_perimeter": r = L/(2*pi) using exterior boundary length.
@@ -81,7 +82,7 @@ class FitOptions:
             ignored if provided.
     """
 
-    spacing: float = 1.0  # sampling step along polylines (mesh units)
+    max_edge_length: float = 1.0  # maximum edge length (mesh units)
     radius_strategy: str = (
         "equivalent_area"  # {"equivalent_area", "equivalent_perimeter", "section_median", "section_circle_fit", "nearest_surface"}
     )
@@ -173,7 +174,7 @@ def fit_morphology(
     Trace skeleton over a mesh and build a morphology graph with nodes at sampled
     points and radii estimated from local mesh cross-sections.
 
-    - Resamples each input polyline with spacing `options.spacing`.
+    - Resamples each input polyline with `options.max_edge_length`.
     - For each sample P with tangent T, intersects the mesh with the plane
       (origin=P, normal=T) and selects the polygon that covers/contains the local
       origin, or the one whose boundary is closest to it.
@@ -233,12 +234,12 @@ def fit_morphology(
 
     # Start logging summary
     logger.debug(
-        "Tracing start: mesh[V=%d,F=%d], skeleton[nodes=%d,edges=%d], spacing=%.3g, radius_strategy=%s",
+        "Tracing start: mesh[V=%d,F=%d], skeleton[nodes=%d,edges=%d], max_edge_length=%.3g, radius_strategy=%s",
         len(mesh.vertices),
         len(mesh.faces),
         skel.number_of_nodes(),
         skel.number_of_edges(),
-        float(options.spacing),
+        float(options.max_edge_length),
         str(options.radius_strategy),
     )
 
@@ -278,7 +279,7 @@ def fit_morphology(
 
     # Spatial index for deduplicating nodes by overlapping coordinates
     # Use quantization by tolerance cell to find candidates, then check true distance
-    quant_tol = max(1e-9, 1e-3 * float(options.spacing))
+    quant_tol = max(1e-9, 1e-3 * float(options.max_edge_length))
 
     def _quant_key(P: np.ndarray) -> tuple[int, int, int]:
         return tuple(np.round(np.asarray(P, dtype=float) / quant_tol).astype(int))  # type: ignore[return-value]
@@ -332,7 +333,7 @@ def fit_morphology(
             continue
 
         # Resample the path
-        samples = _resample_polyline(pl, float(options.spacing))
+        samples = _resample_polyline(pl, float(options.max_edge_length))
         logger.debug(
             "Edge group %d: input_pts=%d -> samples=%d",
             int(pl_index),
@@ -510,11 +511,19 @@ def fit_morphology(
 # ---------------------------------------------------------------------------
 
 
-def _resample_polyline(pl: np.ndarray, spacing: float) -> np.ndarray:
-    """Resample a polyline at approximately constant arc-length spacing.
+def _resample_polyline(pl: np.ndarray, max_edge_length: float) -> np.ndarray:
+    """Resample a polyline with optimal segment distribution.
 
-    Includes the first and last vertex; inserts intermediate points every
-    multiple of `spacing` along cumulative arclength.
+    Computes the optimal number of segments such that all segments are
+    no longer than max_edge_length, with segments as uniform as possible.
+    Always includes the first and last vertex.
+
+    Args:
+        pl: Polyline as (N, 3) array
+        max_edge_length: Maximum allowed edge length
+
+    Returns:
+        Resampled polyline as (M, 3) array
     """
     P = np.asarray(pl, dtype=float)
     if P.ndim != 2 or P.shape[1] != 3 or P.shape[0] == 0:
@@ -529,11 +538,12 @@ def _resample_polyline(pl: np.ndarray, spacing: float) -> np.ndarray:
     if total <= 0.0:
         return P[[0], :].copy()
 
-    step = float(max(spacing, 1e-12))
-    # Always include start and end
-    targets = list(np.arange(0.0, total, step))
-    if targets[-1] != total:
-        targets.append(total)
+    # Compute optimal number of segments
+    # n_segments such that total / n_segments <= max_edge_length
+    n_segments = max(1, int(np.ceil(total / max_edge_length)))
+
+    # Distribute samples uniformly along the polyline
+    targets = np.linspace(0.0, total, n_segments + 1)
 
     out: List[np.ndarray] = []
     si = 0  # segment index

@@ -306,6 +306,102 @@ class MorphologyGraph(nx.Graph):
 
         return total_area
 
+    def scale_radii_to_match_mesh(
+        self, mesh, metric: str = "surface_area", remove_overlaps: bool = False
+    ) -> float:
+        """Scale all radii to match the mesh's surface area or volume.
+
+        This method computes a uniform scaling factor for all radii such that
+        the total surface area or volume of the cable model matches that of
+        the input mesh. The scaling preserves the relative proportions of radii.
+
+        Parameters
+        ----------
+        mesh : trimesh.Trimesh or MeshManager
+            The mesh to match. Can be either a trimesh.Trimesh object or a
+            MeshManager instance.
+        metric : str, default "surface_area"
+            Which metric to match. Options are:
+            - "surface_area": Match total surface area
+            - "volume": Match total volume
+        remove_overlaps : bool, default False
+            If True, remove overlap correction for branch points when computing
+            the morphology's surface area or volume.
+
+        Returns
+        -------
+        float
+            The scaling factor applied to all radii.
+
+        Raises
+        ------
+        ValueError
+            If metric is not "surface_area" or "volume", or if the mesh has
+            zero area/volume, or if the morphology has zero area/volume.
+
+        Examples
+        --------
+        >>> from mcf2swc import MeshManager, MorphologyGraph
+        >>> mesh_mgr = MeshManager(mesh_path="neuron.obj")
+        >>> graph = MorphologyGraph.from_swc_file("output.swc")
+        >>> scale_factor = graph.scale_radii_to_match_mesh(mesh_mgr)
+        >>> print(f"Radii scaled by factor: {scale_factor:.3f}")
+        """
+        # Handle mesh input - extract trimesh.Trimesh if needed
+        try:
+            from .mesh import MeshManager
+        except ImportError:
+            MeshManager = None
+
+        if MeshManager is not None and isinstance(mesh, MeshManager):
+            mesh_obj = mesh.mesh
+        else:
+            # Assume it's already a trimesh.Trimesh
+            mesh_obj = mesh
+
+        # Validate metric
+        if metric not in ["surface_area", "volume"]:
+            raise ValueError(
+                f"metric must be 'surface_area' or 'volume', got '{metric}'"
+            )
+
+        # Get target value from mesh
+        if metric == "surface_area":
+            target_value = float(mesh_obj.area)
+            if target_value <= 0.0:
+                raise ValueError("Mesh has zero or negative surface area")
+            current_value = self.compute_surface_area(remove_overlaps=remove_overlaps)
+        else:  # volume
+            target_value = float(mesh_obj.volume)
+            if target_value <= 0.0:
+                raise ValueError("Mesh has zero or negative volume")
+            current_value = self.compute_volume(remove_overlaps=remove_overlaps)
+
+        if current_value <= 0.0:
+            raise ValueError(
+                f"Morphology has zero or negative {metric.replace('_', ' ')}"
+            )
+
+        # For surface area: SA scales with r² (since SA ∝ r²)
+        # For volume: V scales with r³ (since V ∝ r³)
+        # So if we scale all radii by factor k:
+        #   - SA_new = k² * SA_old
+        #   - V_new = k³ * V_old
+        # Therefore:
+        #   - For SA: k = sqrt(target_SA / current_SA)
+        #   - For V: k = cbrt(target_V / current_V)
+
+        if metric == "surface_area":
+            scale_factor = np.sqrt(target_value / current_value)
+        else:  # volume
+            scale_factor = np.cbrt(target_value / current_value)
+
+        # Apply scaling to all node radii
+        for node_id in self.nodes():
+            self.nodes[node_id]["radius"] *= scale_factor
+
+        return scale_factor
+
     def print_attributes(
         self, *, node_info: bool = False, edge_info: bool = False
     ) -> None:
