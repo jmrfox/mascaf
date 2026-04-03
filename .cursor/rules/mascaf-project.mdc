@@ -1,0 +1,30 @@
+---
+description: MaSCaF (mascaf) repo layout, uv workflow, and Python/testing conventions
+alwaysApply: true
+---
+
+# MaSCaF (`mascaf`) — project conventions
+
+## Package manager (uv)
+
+- Treat **`pyproject.toml`** as the source of truth for dependencies and Python version (`requires-python >= 3.12`).
+- Install/sync the environment with **`uv sync`** (from the repo root).
+- Run commands inside that environment with **`uv run`** — e.g. `uv run pytest`, `uv run python path/to/script.py`, `uv run jupyter lab`.
+- Add dependencies with **`uv add <package>`** (updates `pyproject.toml` and the lockfile). Do not hand-edit dependency lists without a good reason.
+
+## Layout
+
+- **Library code** lives under **`mascaf/`** (import as `mascaf`).
+- **Tests** live under **`tests/`** (`test_*.py`).
+- **`notebooks/`** holds Jupyter work; **`scripts/`** for one-off CLI-style scripts; **`examples/`** for runnable examples.
+- **`data/`** may hold large or generated artifacts — avoid drive-by edits unless the task is explicitly about that data.
+
+## Tests
+
+- Run the suite from repo root: **`uv run pytest`**.
+- Pytest config in `pyproject.toml` under `[tool.pytest.ini_options]` (e.g. ignored tests via `addopts`). Respect those settings when adding or fixing tests.
+
+## Code style (Python)
+
+- Match existing modules: type hints where the file already uses them, `from __future__ import annotations` if the file already does, similar docstring depth.
+- Prefer extending existing APIs over parallel implementations. Keep changes scoped to the task.

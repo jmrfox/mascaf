@@ -5,7 +5,7 @@ Test branch point detection on TS2 skeleton.
 from pathlib import Path
 import pytest
 import numpy as np
-from mcf2swc import SkeletonGraph
+from mascaf import SkeletonGraph
 
 
 ROOT = Path(__file__).resolve().parents[1]

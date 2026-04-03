@@ -4,7 +4,7 @@ Quick demonstration of parallel skeleton optimization.
 
 import numpy as np
 import time
-from mcf2swc import (
+from mascaf import (
     SkeletonGraph,
     SkeletonOptimizer,
     SkeletonOptimizerOptions,

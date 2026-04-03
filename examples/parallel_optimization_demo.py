@@ -9,7 +9,7 @@ import numpy as np
 import time
 import multiprocessing as mp
 
-from mcf2swc import (
+from mascaf import (
     MeshManager,
     SkeletonGraph,
     SkeletonOptimizer,

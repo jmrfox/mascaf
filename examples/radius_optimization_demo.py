@@ -7,7 +7,7 @@ them independently using geometric heuristics.
 """
 
 import numpy as np
-from mcf2swc import (
+from mascaf import (
     SWCModel,
     example_mesh,
     OptimizerOptions,

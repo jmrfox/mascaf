@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from mcf2swc import MorphologyGraph, Junction
+from mascaf import MorphologyGraph, Junction
 
 
 def test_from_swc_file_basic():

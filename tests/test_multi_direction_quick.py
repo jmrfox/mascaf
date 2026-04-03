@@ -4,7 +4,7 @@ Test multi-directional sampling for medial axis centering.
 
 import pytest
 import numpy as np
-from mcf2swc import (
+from mascaf import (
     SkeletonGraph,
     SkeletonOptimizer,
     SkeletonOptimizerOptions,

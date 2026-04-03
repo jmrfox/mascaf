@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import trimesh
 
-from mcf2swc import (
+from mascaf import (
     MeshManager,
     SkeletonGraph,
     SkeletonOptimizer,

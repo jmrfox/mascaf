@@ -5,7 +5,7 @@ import tempfile
 
 import numpy as np
 
-from mcf2swc import MorphologyGraph, Junction, SWCModel
+from mascaf import MorphologyGraph, Junction, SWCModel
 
 
 def test_morphology_graph_cycle_breaking():

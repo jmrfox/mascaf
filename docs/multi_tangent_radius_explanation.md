@@ -72,7 +72,7 @@ For nodes with multiple connected edges:
 
 ### Basic Usage
 ```python
-from mcf2swc import FitOptions, fit_morphology
+from mascaf import FitOptions, fit_morphology
 
 opts = FitOptions(
     spacing=1.0,

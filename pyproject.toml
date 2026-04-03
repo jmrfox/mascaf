@@ -1,7 +1,11 @@
+[build-system]
+requires = ["hatchling>=1.26.0"]
+build-backend = "hatchling.build"
+
 [project]
-name = "mcf2swc"
+name = "mascaf"
 version = "0.1.0"
-description = "Add your description here"
+description = "MaSCaF (Mesh and Skeleton Cable Fitting): mesh + MCF skeleton to SWC morphology models."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

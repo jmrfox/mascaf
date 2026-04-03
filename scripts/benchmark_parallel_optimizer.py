@@ -12,7 +12,7 @@ from typing import List, Dict, Tuple
 import argparse
 import json
 
-from mcf2swc import (
+from mascaf import (
     SkeletonGraph,
     SkeletonOptimizer,
     SkeletonOptimizerOptions,

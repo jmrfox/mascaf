@@ -1,6 +1,6 @@
-# mcf2swc
+# MaSCaF
 
-This is a Python package designed to take a 3D closed mesh surface (obj format, triangle-faced mesh) and the results of a mean curvature flow calculation (MCF) (polylines format) and produce an SWC model.
+**MaSCaF** (Mesh and Skeleton Cable Fitting) is a Python package (`import mascaf`) designed to take a 3D closed mesh surface (obj format, triangle-faced mesh) and the results of a mean curvature flow calculation (MCF) (polylines format) and produce an SWC model.
 
 [Triangle mesh format](https://en.wikipedia.org/wiki/Triangle_mesh)
 
@@ -53,7 +53,7 @@ MCF skeletonization reproduces general topology very well, but the resulting ske
 ### Usage Example
 
 ```python
-from mcf2swc import MeshManager, SkeletonGraph, SkeletonOptimizer, SkeletonOptimizerOptions
+from mascaf import MeshManager, SkeletonGraph, SkeletonOptimizer, SkeletonOptimizerOptions
 
 # Load mesh and skeleton
 mesh_mgr = MeshManager(mesh_path="mesh.obj")
@@ -98,7 +98,7 @@ The relative weight of these objectives is controlled by the `smoothing_weight` 
 ## Complete Workflow Example
 
 ```python
-from mcf2swc import MeshManager, SkeletonGraph, SkeletonOptimizer, SkeletonOptimizerOptions, fit_morphology, FitOptions
+from mascaf import MeshManager, SkeletonGraph, SkeletonOptimizer, SkeletonOptimizerOptions, fit_morphology, FitOptions
 
 # 1. Load inputs
 mesh_mgr = MeshManager(mesh_path="neuron.obj")

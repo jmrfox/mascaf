@@ -4,7 +4,7 @@ authors:
 - family-names: "Fox"
   given-names: "Jordan"
   orcid: "https://orcid.org/0000-0002-1363-9845"
-title: "mcf2swc"
+title: "MaSCaF"
 version: 0.1.0
 date-released: 2026-03-02
-url: "https://github.com/jmrfox/mcf2swc"
+url: "https://github.com/jmrfox/mascaf"

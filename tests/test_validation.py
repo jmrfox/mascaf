@@ -2,7 +2,7 @@ from pathlib import Path
 
 import numpy as np
 
-from mcf2swc import (
+from mascaf import (
     example_mesh,
     fit_morphology,
     FitOptions,

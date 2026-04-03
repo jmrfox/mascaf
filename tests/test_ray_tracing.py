@@ -3,7 +3,7 @@ Test ray tracing-based medial axis centering (no probe_distance needed).
 """
 
 import numpy as np
-from mcf2swc import (
+from mascaf import (
     SkeletonGraph,
     MeshManager,
     SkeletonOptimizer,

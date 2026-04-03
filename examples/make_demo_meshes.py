@@ -1,4 +1,4 @@
-from mcf2swc import example_mesh
+from mascaf import example_mesh
 
 
 if __name__ == "__main__":

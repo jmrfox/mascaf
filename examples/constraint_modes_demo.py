@@ -6,7 +6,7 @@ the under-constrained optimization problem.
 """
 
 import numpy as np
-from mcf2swc import (
+from mascaf import (
     SWCModel,
     example_mesh,
     OptimizerOptions,
@@ -129,7 +129,7 @@ def demo_why_constraints_matter():
     print("\nSimple 2-node skeleton, target mesh with radius=1.0")
     print("\nTesting multiple random initializations with unconstrained mode:")
 
-    from mcf2swc.radius_optimizer import RadiusOptimizer
+    from mascaf.radius_optimizer import RadiusOptimizer
 
     for trial in range(3):
         # Random initial radii

@@ -6,7 +6,7 @@ import tempfile
 import numpy as np
 import networkx as nx
 
-from mcf2swc import (
+from mascaf import (
     fit_morphology,
     FitOptions,
     SkeletonGraph,

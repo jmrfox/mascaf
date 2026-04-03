@@ -2111,7 +2111,7 @@ DATA
     __all__ = ['SWCRecord', 'SWCParseResult', 'parse_swc', 'SWCModel', 'Se...
 
 FILE
-    c:\users\mainuser\documents\repos\mcf2swc\.venv\lib\site-packages\swctools\__init__.py
+    c:\users\mainuser\documents\repos\mascaf\.venv\lib\site-packages\swctools\__init__.py
 
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -4365,7 +4365,7 @@ DATA
         A generic version of dict.
 
 FILE
-    c:\users\mainuser\documents\repos\mcf2swc\.venv\lib\site-packages\swctools\config.py
+    c:\users\mainuser\documents\repos\mascaf\.venv\lib\site-packages\swctools\config.py
 
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -4845,7 +4845,7 @@ DATA
     __all__ = ['Segment', 'frustum_mesh', 'batch_frusta', 'sphere_mesh', '...
 
 FILE
-    c:\users\mainuser\documents\repos\mcf2swc\.venv\lib\site-packages\swctools\geometry.py
+    c:\users\mainuser\documents\repos\mascaf\.venv\lib\site-packages\swctools\geometry.py
 
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -5118,7 +5118,7 @@ DATA
     __all__ = ['SWCRecord', 'SWCParseResult', 'parse_swc']
 
 FILE
-    c:\users\mainuser\documents\repos\mcf2swc\.venv\lib\site-packages\swctools\io.py
+    c:\users\mainuser\documents\repos\mascaf\.venv\lib\site-packages\swctools\io.py
 
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -6781,7 +6781,7 @@ DATA
         A generic version of collections.abc.Mapping.
 
 FILE
-    c:\users\mainuser\documents\repos\mcf2swc\.venv\lib\site-packages\swctools\model.py
+    c:\users\mainuser\documents\repos\mascaf\.venv\lib\site-packages\swctools\model.py
 
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -6897,7 +6897,7 @@ DATA
         A generic version of collections.abc.Sequence.
 
 FILE
-    c:\users\mainuser\documents\repos\mcf2swc\.venv\lib\site-packages\swctools\viz.py
+    c:\users\mainuser\documents\repos\mascaf\.venv\lib\site-packages\swctools\viz.py
 
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -4,7 +4,7 @@ import numpy as np
 from io import StringIO
 import sys
 
-from mcf2swc import MorphologyGraph
+from mascaf import MorphologyGraph
 
 
 def test_print_attributes_basic():

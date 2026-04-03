@@ -148,3 +148,5 @@ cython_debug/
 .DS_Store
 Thumbs.db
 
+# rubbish
+.rubbish/

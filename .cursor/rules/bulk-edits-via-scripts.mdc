@@ -1,0 +1,25 @@
+---
+description: Prefer terminal scripts for multi-file mechanical edits (find/replace, renames)
+alwaysApply: true
+---
+
+# Bulk edits: use a script in the terminal
+
+When a change must touch **many files** and the transformation is **mechanical** (e.g. consistent find-and-replace, path or identifier renames, header updates), **implement it as a small script** (Python, PowerShell, or similar) and **run it in the terminal** instead of applying the same edit file-by-file in the editor.
+
+## When this applies
+
+- Same logical change repeated across a large set of paths (tens of files or huge diffs).
+- Logic is easy to express in code: include/exclude globs, skip `data/` or binaries, skip vendor dirs, etc.
+
+## When it does not need a script
+
+- Only a **few** files, or the change needs **judgment per file** — direct edits are fine.
+
+## How to run it
+
+- Put one-off automation under **`scripts/`** (or a clearly named temp script) so it is visible in git history.
+- Prefer a **dry-run** mode or print affected paths first, then run for real.
+- After running, use **`git diff`** (or equivalent) to review the full change set.
+
+This keeps large refactors auditable and avoids inconsistent partial application.

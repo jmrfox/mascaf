@@ -8,7 +8,7 @@ of the mesh volume.
 
 import numpy as np
 
-from mcf2swc import (
+from mascaf import (
     MeshManager,
     PolylinesSkeleton,
     SkeletonOptimizer,

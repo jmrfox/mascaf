@@ -55,7 +55,7 @@ class Validation:
 
     Examples
     --------
-    >>> from mcf2swc import MeshManager, SkeletonGraph, Validation
+    >>> from mascaf import MeshManager, SkeletonGraph, Validation
     >>> mesh_mgr = MeshManager(mesh_path="neuron.obj")
     >>> skeleton = SkeletonGraph.from_polylines(polylines)
     >>> # Option 1: Validate from SWC file

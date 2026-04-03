@@ -750,7 +750,7 @@ def _world_to_local_plane(P: np.ndarray, normal: np.ndarray) -> np.ndarray:
 def _compose_polygons_with_holes(polys: List[sgeom.Polygon]) -> List[sgeom.Polygon]:
     """Compose simple polygons into polygons-with-holes by containment parity.
 
-    Mirrors mcf2swc.skeleton._compose_polygons_with_holes but kept local to avoid
+    Mirrors mascaf.skeleton._compose_polygons_with_holes but kept local to avoid
     tight coupling.
     """
     if not polys:

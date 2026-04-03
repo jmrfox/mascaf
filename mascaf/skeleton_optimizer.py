@@ -80,8 +80,8 @@ class SkeletonOptimizer:
     medial axis of the mesh volume.
 
     Example:
-        >>> from mcf2swc.skeleton import SkeletonGraph
-        >>> from mcf2swc import MeshManager, SkeletonOptimizer
+        >>> from mascaf.skeleton import SkeletonGraph
+        >>> from mascaf import MeshManager, SkeletonOptimizer
         >>> skeleton = SkeletonGraph.from_txt("skeleton.polylines.txt")
         >>> mesh_mgr = MeshManager(mesh_path="mesh.obj")
         >>> optimizer = SkeletonOptimizer(skeleton, mesh_mgr.mesh)

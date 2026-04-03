@@ -1,0 +1,23 @@
+---
+description: Jupyter notebook practices for this repo (uv, kernels, edits)
+globs: "**/*.ipynb"
+alwaysApply: false
+---
+
+# Jupyter notebooks
+
+## Environment and running
+
+- Notebooks should use the **same Python environment as the project** (the one created/managed by **uv** via `uv sync`). Register or select that interpreter in the kernel picker so `import mascaf` and declared dependencies resolve.
+- Start Jupyter with the project env, e.g. from repo root: **`uv run jupyter lab`** (or `notebook`).
+
+## Editing and collaboration
+
+- Prefer **small, purposeful diffs**: avoid re-saving the whole notebook just to tweak one cell if the tool rewrites metadata or unrelated outputs.
+- Assume **outputs may be cleared** for version control; keep narrative and parameters in markdown/code cells so the notebook stays reproducible.
+- For heavy computation or large outputs, consider moving logic into **`mascaf/`** or **`scripts/`** and calling it from minimal notebook cells.
+
+## Imports and paths
+
+- Run notebooks with the **workspace root** (repo root) as the working directory when possible so relative paths to `data/` and the package stay predictable.
+- Use the same dependency versions as **`pyproject.toml`**; do not suggest `pip install` one-offs without aligning with `uv add` / `uv sync`.

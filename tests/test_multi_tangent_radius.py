@@ -4,7 +4,7 @@ Tests for multi-tangent radius computation in graph fitting.
 
 import numpy as np
 import pytest
-from mcf2swc import (
+from mascaf import (
     SkeletonGraph,
     FitOptions,
     fit_morphology,
@@ -73,7 +73,7 @@ class TestMultiTangentRadius:
 
     def test_tangent_computation_terminal_nodes(self, linear_skeleton):
         """Test tangent computation for terminal nodes."""
-        from mcf2swc.graph_fitting import _compute_node_tangents
+        from mascaf.graph_fitting import _compute_node_tangents
 
         # Terminal nodes should have 1 tangent
         terminal_tangents = _compute_node_tangents(linear_skeleton, 0)
@@ -82,7 +82,7 @@ class TestMultiTangentRadius:
 
     def test_tangent_computation_branch_nodes(self, y_shaped_skeleton):
         """Test tangent computation for branch nodes."""
-        from mcf2swc.graph_fitting import _compute_node_tangents
+        from mascaf.graph_fitting import _compute_node_tangents
 
         # Center branch node (degree 4) should have 4 tangents
         center_tangents = _compute_node_tangents(y_shaped_skeleton, 2)
@@ -176,7 +176,7 @@ class TestMultiTangentRadius:
 
     def test_radius_reduction_function(self):
         """Test the radius reduction function directly."""
-        from mcf2swc.graph_fitting import _reduce_multi_radii
+        from mascaf.graph_fitting import _reduce_multi_radii
 
         # Test with multiple radii
         radii = [1.0, 2.0, 3.0, 4.0]
@@ -199,7 +199,7 @@ class TestMultiTangentRadius:
 
     def test_skeleton_node_radii_computation(self, cylinder_mesh, y_shaped_skeleton):
         """Test the skeleton node radii computation function."""
-        from mcf2swc.graph_fitting import _compute_skeleton_node_radii
+        from mascaf.graph_fitting import _compute_skeleton_node_radii
         from scipy.spatial import cKDTree
 
         opts = FitOptions(spacing=0.5, radius_strategy="equivalent_area")

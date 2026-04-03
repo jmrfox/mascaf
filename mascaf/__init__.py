@@ -1,5 +1,5 @@
 """
-mcf2swc
+MaSCaF (Mesh and Skeleton Cable Fitting) — Python package ``mascaf``.
 
 A lightweight toolkit for converting mesh cross-sections and skeleton graph guidance
 into SWC models.
@@ -23,7 +23,7 @@ from importlib.metadata import PackageNotFoundError, version
 
 # Package version reported from installed metadata (fallback for editable/dev installs)
 try:
-    __version__ = version("mcf2swc")
+    __version__ = version("mascaf")
 except PackageNotFoundError:  # pragma: no cover - best-effort in dev
     __version__ = "0.1.0"
 

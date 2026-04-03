@@ -51,7 +51,7 @@ where `r₁` and `r₂` are the radii at the two endpoints, and `h` is the edge 
 ### Basic Usage
 
 ```python
-from mcf2swc import (
+from mascaf import (
     fit_swc,
     optimize_skeleton_radii,
     OptimizerOptions,
@@ -70,7 +70,7 @@ optimized_skeleton.to_swc_file("output.swc")
 ### Customizing Optimization
 
 ```python
-from mcf2swc import OptimizerOptions, optimize_skeleton_radii
+from mascaf import OptimizerOptions, optimize_skeleton_radii
 
 # Configure optimizer
 options = OptimizerOptions(
@@ -103,7 +103,7 @@ optimized = optimize_skeleton_radii(skeleton, mesh, options=options)
 ### Advanced Usage with RadiusOptimizer Class
 
 ```python
-from mcf2swc.radius_optimizer import RadiusOptimizer, OptimizerOptions
+from mascaf.radius_optimizer import RadiusOptimizer, OptimizerOptions
 
 # Create optimizer instance
 optimizer = RadiusOptimizer(skeleton, mesh, options=options)
@@ -173,7 +173,7 @@ optimize_skeleton_radii(
 ### Typical Pipeline
 
 ```python
-from mcf2swc import (
+from mascaf import (
     MeshManager,
     PolylinesSkeleton,
     SWCFitOptions,

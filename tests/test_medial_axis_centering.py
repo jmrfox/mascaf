@@ -5,7 +5,7 @@ Test medial axis centering method for skeleton optimization.
 from pathlib import Path
 import pytest
 import numpy as np
-from mcf2swc import (
+from mascaf import (
     SkeletonGraph,
     SkeletonOptimizer,
     SkeletonOptimizerOptions,
