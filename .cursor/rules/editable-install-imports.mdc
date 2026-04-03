@@ -1,0 +1,11 @@
+---
+description: Editable install; prefer package imports over path hacks
+alwaysApply: true
+---
+
+# Editable install and imports
+
+Assume the project is **installed in editable mode** in the venv (e.g. **`uv pip install -e .`** from the repo root, or **`uv sync`** when it installs this package editably).
+
+- Use **normal package imports** (`import mascaf`, `from mascaf.mesh import MeshManager`, etc.) in library code, **tests**, **scripts**, and **examples**.
+- Do **not** rely on `sys.path` tweaks, duplicated source roots, or brittle relative paths to “find” `mascaf` — the editable install should make the package importable by name.

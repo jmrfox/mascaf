@@ -98,7 +98,7 @@ class TestMultiTangentRadius:
 
         for method in reduction_methods:
             opts = FitOptions(
-                spacing=0.5,
+                max_edge_length=0.5,
                 radius_strategy="equivalent_area",
                 multi_tangent_reduction=method,
             )
@@ -128,7 +128,7 @@ class TestMultiTangentRadius:
 
         for strategy in strategies:
             opts = FitOptions(
-                spacing=0.5,
+                max_edge_length=0.5,
                 radius_strategy=strategy,
                 multi_tangent_reduction="median",
             )
@@ -147,7 +147,7 @@ class TestMultiTangentRadius:
     def test_linear_skeleton_multi_tangent(self, cylinder_mesh, linear_skeleton):
         """Test multi-tangent approach on linear skeleton."""
         opts = FitOptions(
-            spacing=0.5,
+            max_edge_length=0.5,
             radius_strategy="equivalent_area",
             multi_tangent_reduction="median",
         )
@@ -166,7 +166,7 @@ class TestMultiTangentRadius:
     def test_invalid_reduction_method(self, cylinder_mesh, y_shaped_skeleton):
         """Test that invalid reduction method raises error."""
         opts = FitOptions(
-            spacing=0.5,
+            max_edge_length=0.5,
             radius_strategy="equivalent_area",
             multi_tangent_reduction="invalid_method",
         )
@@ -202,7 +202,7 @@ class TestMultiTangentRadius:
         from mascaf.graph_fitting import _compute_skeleton_node_radii
         from scipy.spatial import cKDTree
 
-        opts = FitOptions(spacing=0.5, radius_strategy="equivalent_area")
+        opts = FitOptions(max_edge_length=0.5, radius_strategy="equivalent_area")
         eps = 1e-4 * max(cylinder_mesh.bounding_box.extents)
         V = np.asarray(cylinder_mesh.vertices, dtype=float)
         v_kdtree = cKDTree(V)

@@ -134,7 +134,7 @@ class Validation:
             f")"
         )
 
-    def compare_volumes(self, remove_overlaps=False) -> dict:
+    def compare_volumes(self, account_for_overlaps: bool = False) -> dict:
         """
         Compare total volume between mesh and morphology model.
 
@@ -143,8 +143,9 @@ class Validation:
 
         Parameters
         ----------
-        remove_overlaps : bool, default False
-            If True, remove overlap correction for branch points.
+        account_for_overlaps : bool, default False
+            If True, subtract branch-point overlap corrections in the morphology
+            volume (see :meth:`MorphologyGraph.compute_volume`).
 
         Returns
         -------
@@ -169,7 +170,7 @@ class Validation:
 
         # Calculate morphology volume using MorphologyGraph method
         morphology_volume = self.morphology.compute_volume(
-            remove_overlaps=remove_overlaps
+            account_for_overlaps=account_for_overlaps
         )
 
         # Calculate comparison metrics
@@ -185,7 +186,7 @@ class Validation:
             "relative_error": rel_error,
         }
 
-    def compare_surface_areas(self, remove_overlaps=False) -> dict:
+    def compare_surface_areas(self, account_for_overlaps: bool = False) -> dict:
         """
         Compare total surface area between mesh and morphology model.
 
@@ -195,8 +196,9 @@ class Validation:
 
         Parameters
         ----------
-        remove_overlaps : bool, default False
-            If True, remove overlap correction for branch points.
+        account_for_overlaps : bool, default False
+            If True, subtract branch-point overlap corrections in the morphology
+            surface area (see :meth:`MorphologyGraph.compute_surface_area`).
 
         Returns
         -------
@@ -221,7 +223,7 @@ class Validation:
 
         # Calculate morphology surface area using MorphologyGraph method
         morphology_area = self.morphology.compute_surface_area(
-            remove_overlaps=remove_overlaps
+            account_for_overlaps=account_for_overlaps
         )
 
         # Calculate comparison metrics

@@ -83,12 +83,12 @@ def example_no_normalization():
 
 
 def example_with_overlap_removal():
-    """Normalize with overlap removal for branch points."""
+    """Normalize while subtracting branch-point overlap corrections."""
     # Load your mesh and skeleton
     mesh = trimesh.load("path/to/mesh.obj")
     skeleton = MorphologyGraph.from_swc_file("path/to/skeleton.swc")
 
-    # Configure optimizer with normalization and overlap removal
+    # Configure optimizer with normalization and branch overlap accounting
     # This subtracts overlap corrections at branch points (degree > 2)
     options = RadiusOptimizerOptions(
         n_longitudinal=5,
@@ -96,7 +96,7 @@ def example_with_overlap_removal():
         max_iterations=20,
         normalize=True,
         normalize_metric="surface_area",
-        remove_overlaps=True,  # Remove overlap corrections
+        account_for_overlaps=True,
         verbose=True,
     )
 

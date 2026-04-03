@@ -14,7 +14,7 @@ class TestScaleRadiiToMatchMesh:
     """Test suite for scale_radii_to_match_mesh method."""
 
     def test_scale_factor_calculation_surface_area(self):
-        """Test that scale factor is correctly calculated for surface area."""
+        """Uniform scale solves lateral (linear in k) + caps (quadratic in k), not sqrt ratio."""
         mesh = example_mesh("cylinder", radius=2.0, height=10.0)
         target_area = mesh.area
 
@@ -23,21 +23,24 @@ class TestScaleRadiiToMatchMesh:
         graph.add_node(1, xyz=np.array([0.0, 0.0, 10.0]), radius=1.0)
         graph.add_edge(0, 1)
 
-        initial_area = graph.compute_surface_area(remove_overlaps=False)
-        expected_scale = np.sqrt(target_area / initial_area)
+        r = 1.0
+        h = 10.0
+        # 2*pi*r**2*k**2 + 2*pi*r*h*k = target  (two equal caps + lateral cylinder)
+        b = 2.0 * np.pi * r * h
+        a = 2.0 * np.pi * r**2
+        expected_scale = (-b + np.sqrt(b**2 + 4.0 * a * target_area)) / (2.0 * a)
 
         scale_factor = graph.scale_radii_to_match_mesh(
             mesh, metric="surface_area"
         )
 
         assert scale_factor == pytest.approx(expected_scale, rel=1e-6)
-        
-        # Verify area after scaling matches target
-        final_area = graph.compute_surface_area(remove_overlaps=False)
+
+        final_area = graph.compute_surface_area(account_for_overlaps=False)
         assert final_area == pytest.approx(target_area, rel=1e-6)
 
     def test_scale_factor_calculation_volume(self):
-        """Test that scale factor is correctly calculated for volume."""
+        """Frustum volume at fixed edge length scales as k^2, not k^3."""
         mesh = example_mesh("cylinder", radius=2.0, height=10.0)
         target_volume = mesh.volume
 
@@ -46,15 +49,14 @@ class TestScaleRadiiToMatchMesh:
         graph.add_node(1, xyz=np.array([0.0, 0.0, 10.0]), radius=1.0)
         graph.add_edge(0, 1)
 
-        initial_volume = graph.compute_volume(remove_overlaps=False)
-        expected_scale = np.cbrt(target_volume / initial_volume)
+        initial_volume = graph.compute_volume(account_for_overlaps=False)
+        expected_scale = np.sqrt(target_volume / initial_volume)
 
         scale_factor = graph.scale_radii_to_match_mesh(mesh, metric="volume")
 
         assert scale_factor == pytest.approx(expected_scale, rel=1e-6)
-        
-        # Verify volume after scaling matches target
-        final_volume = graph.compute_volume(remove_overlaps=False)
+
+        final_volume = graph.compute_volume(account_for_overlaps=False)
         assert final_volume == pytest.approx(target_volume, rel=1e-6)
 
     def test_radii_scaled_uniformly(self):
@@ -122,11 +124,11 @@ class TestScaleRadiiToMatchMesh:
         )
 
         assert scale_factor > 0.0
-        graph_area = graph.compute_surface_area(remove_overlaps=False)
+        graph_area = graph.compute_surface_area(account_for_overlaps=False)
         assert graph_area == pytest.approx(target_area, rel=1e-6)
 
-    def test_scale_with_remove_overlaps(self):
-        """Test scaling with remove_overlaps option."""
+    def test_scale_with_account_for_overlaps(self):
+        """Test scaling with branch-point overlap corrections enabled."""
         mesh = example_mesh("cylinder", radius=2.0, height=10.0)
         target_area = mesh.area
 
@@ -139,18 +141,13 @@ class TestScaleRadiiToMatchMesh:
         graph.add_edge(1, 2)
         graph.add_edge(1, 3)
 
-        initial_area = graph.compute_surface_area(remove_overlaps=True)
-
         scale_factor = graph.scale_radii_to_match_mesh(
-            mesh, metric="surface_area", remove_overlaps=True
+            mesh, metric="surface_area", account_for_overlaps=True
         )
 
         assert scale_factor > 0.0
-        
-        # Verify scaling relationship
-        graph_area = graph.compute_surface_area(remove_overlaps=True)
-        expected_area = initial_area * (scale_factor ** 2)
-        assert graph_area == pytest.approx(expected_area, rel=1e-6)
+
+        graph_area = graph.compute_surface_area(account_for_overlaps=True)
         assert graph_area == pytest.approx(target_area, rel=1e-6)
 
     def test_invalid_metric_raises_error(self):
@@ -190,8 +187,8 @@ class TestScaleRadiiToMatchMesh:
         with pytest.raises(ValueError, match="zero or negative surface area"):
             graph.scale_radii_to_match_mesh(mesh, metric="surface_area")
 
-    def test_area_scales_quadratically_with_radius(self):
-        """Test that surface area scales as r^2."""
+    def test_surface_area_matches_mesh_not_pure_k_squared(self):
+        """Lateral area is O(k) in k for fixed h with r1=r2; caps are O(k^2)."""
         mesh = example_mesh("cylinder", radius=2.0, height=10.0)
 
         graph = MorphologyGraph()
@@ -199,21 +196,20 @@ class TestScaleRadiiToMatchMesh:
         graph.add_node(1, xyz=np.array([0.0, 0.0, 10.0]), radius=1.0)
         graph.add_edge(0, 1)
 
-        initial_area = graph.compute_surface_area(remove_overlaps=False)
-        
+        initial_area = graph.compute_surface_area(account_for_overlaps=False)
+
         scale_factor = graph.scale_radii_to_match_mesh(
             mesh, metric="surface_area"
         )
-        
-        final_area = graph.compute_surface_area(remove_overlaps=False)
-        
-        # Area should scale as r^2
-        assert final_area == pytest.approx(
-            initial_area * (scale_factor ** 2), rel=1e-6
+
+        final_area = graph.compute_surface_area(account_for_overlaps=False)
+        assert final_area == pytest.approx(mesh.area, rel=1e-6)
+        assert final_area != pytest.approx(
+            initial_area * (scale_factor**2), rel=1e-3
         )
 
-    def test_volume_scales_cubically_with_radius(self):
-        """Test that volume scales as r^3."""
+    def test_volume_matches_mesh_scales_k_squared_for_frusta(self):
+        """Single-frustum volume at fixed h scales as k^2 in uniform radius scale."""
         mesh = example_mesh("cylinder", radius=2.0, height=10.0)
 
         graph = MorphologyGraph()
@@ -221,15 +217,14 @@ class TestScaleRadiiToMatchMesh:
         graph.add_node(1, xyz=np.array([0.0, 0.0, 10.0]), radius=1.0)
         graph.add_edge(0, 1)
 
-        initial_volume = graph.compute_volume(remove_overlaps=False)
-        
+        initial_volume = graph.compute_volume(account_for_overlaps=False)
+
         scale_factor = graph.scale_radii_to_match_mesh(mesh, metric="volume")
-        
-        final_volume = graph.compute_volume(remove_overlaps=False)
-        
-        # Volume should scale as r^3
+
+        final_volume = graph.compute_volume(account_for_overlaps=False)
+        assert final_volume == pytest.approx(mesh.volume, rel=1e-6)
         assert final_volume == pytest.approx(
-            initial_volume * (scale_factor ** 3), rel=1e-6
+            initial_volume * (scale_factor**2), rel=1e-6
         )
 
     def test_scale_multiple_times(self):
@@ -243,11 +238,11 @@ class TestScaleRadiiToMatchMesh:
         graph.add_edge(0, 1)
 
         scale1 = graph.scale_radii_to_match_mesh(mesh1, metric="volume")
-        volume1 = graph.compute_volume(remove_overlaps=False)
+        volume1 = graph.compute_volume(account_for_overlaps=False)
         assert volume1 == pytest.approx(mesh1.volume, rel=1e-6)
 
         scale2 = graph.scale_radii_to_match_mesh(mesh2, metric="volume")
-        volume2 = graph.compute_volume(remove_overlaps=False)
+        volume2 = graph.compute_volume(account_for_overlaps=False)
         assert volume2 == pytest.approx(mesh2.volume, rel=1e-6)
 
         assert scale1 > 0.0
@@ -283,5 +278,5 @@ class TestScaleRadiiToMatchMesh:
             assert graph.nodes[node]["radius"] == pytest.approx(expected)
 
         # Verify surface area matches
-        graph_area = graph.compute_surface_area(remove_overlaps=False)
+        graph_area = graph.compute_surface_area(account_for_overlaps=False)
         assert graph_area == pytest.approx(target_area, rel=1e-6)

@@ -21,7 +21,7 @@ def test_swc_save_reload_preserves_edges():
     mesh = example_mesh("cylinder")
     skel = SkeletonGraph.from_txt(str(DATA / "cylinder.polylines.txt"))
 
-    opts = FitOptions(spacing=1.0, radius_strategy="equivalent_area")
+    opts = FitOptions(max_edge_length=1.0, radius_strategy="equivalent_area")
     morph_graph = fit_morphology(mesh, skel, options=opts)
 
     assert morph_graph.number_of_nodes() > 0, "Original graph has no nodes"

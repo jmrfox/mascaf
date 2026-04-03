@@ -6,6 +6,7 @@ from typing import Any, Dict, List
 import networkx as nx
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.optimize import brentq
 
 from swctools import SWCModel, FrustaSet, plot_model
 
@@ -184,7 +185,7 @@ class MorphologyGraph(nx.Graph):
 
         return swc_model
 
-    def compute_volume(self, remove_overlaps=False) -> float:
+    def compute_volume(self, account_for_overlaps: bool = False) -> float:
         """Compute total volume of the morphology as sum of frustum segments.
 
         Each edge represents a truncated cone (frustum) connecting two nodes.
@@ -196,8 +197,9 @@ class MorphologyGraph(nx.Graph):
 
         Parameters
         ----------
-        remove_overlaps : bool, default False
-            If True, remove overlap correction for branch points.
+        account_for_overlaps : bool, default False
+            If True, subtract branch-point overlap corrections from the naive
+            frustum sum (one correction per edge beyond two at each junction).
 
         Returns
         -------
@@ -210,37 +212,11 @@ class MorphologyGraph(nx.Graph):
         >>> # ... add nodes and edges ...
         >>> volume = graph.compute_volume()
         """
-        total_volume = 0.0
+        return self._metric_at_uniform_radius_scale(
+            1.0, metric="volume", account_for_overlaps=account_for_overlaps
+        )
 
-        # Add frustum volumes for all edges
-        for u, v in self.edges():
-            # Get node attributes
-            xyz_u = self.nodes[u]["xyz"]
-            xyz_v = self.nodes[v]["xyz"]
-            r_u = self.nodes[u]["radius"]
-            r_v = self.nodes[v]["radius"]
-
-            # Compute segment length
-            h = np.linalg.norm(xyz_v - xyz_u)
-
-            # Volume of truncated cone
-            vol = (np.pi * h / 3.0) * (r_u**2 + r_u * r_v + r_v**2)
-            total_volume += vol
-
-        # Subtract overlap correction for branch points (degree > 2)
-        for node_id in self.nodes():
-            degree = self.degree[node_id]
-            if degree > 2 and remove_overlaps:
-                r = self.nodes[node_id]["radius"]
-                # Subtract one ball volume per edge beyond 2
-                num_overlaps = degree - 2
-                # model overlap as a cylinder with radius r and length r
-                overlap_volume = np.pi * r**3
-                total_volume -= num_overlaps * overlap_volume
-
-        return total_volume
-
-    def compute_surface_area(self, remove_overlaps=False) -> float:
+    def compute_surface_area(self, account_for_overlaps: bool = False) -> float:
         """Compute total lateral surface area of the morphology.
 
         Each edge represents a truncated cone (frustum) connecting two nodes.
@@ -253,8 +229,9 @@ class MorphologyGraph(nx.Graph):
 
         Parameters
         ----------
-        remove_overlaps : bool, default False
-            If True, remove overlap correction for branch points.
+        account_for_overlaps : bool, default False
+            If True, subtract branch-point overlap corrections from the naive
+            sum (one correction per edge beyond two at each junction).
 
         Returns
         -------
@@ -267,53 +244,157 @@ class MorphologyGraph(nx.Graph):
         >>> # ... add nodes and edges ...
         >>> area = graph.compute_surface_area()
         """
-        total_area = 0.0
+        return self._metric_at_uniform_radius_scale(
+            1.0, metric="surface_area", account_for_overlaps=account_for_overlaps
+        )
 
-        # Add lateral surface area of all segments
+    def _metric_at_uniform_radius_scale(
+        self,
+        k: float,
+        *,
+        metric: str,
+        account_for_overlaps: bool,
+    ) -> float:
+        """Return SA or volume if every node radius were multiplied by ``k`` (read-only)."""
+        k = float(k)
+        if metric == "volume":
+            total_volume = 0.0
+            for u, v in self.edges():
+                xyz_u = self.nodes[u]["xyz"]
+                xyz_v = self.nodes[v]["xyz"]
+                r_u = self.nodes[u]["radius"] * k
+                r_v = self.nodes[v]["radius"] * k
+                h = np.linalg.norm(xyz_v - xyz_u)
+                total_volume += (np.pi * h / 3.0) * (
+                    r_u**2 + r_u * r_v + r_v**2
+                )
+            for node_id in self.nodes():
+                degree = self.degree[node_id]
+                if degree > 2 and account_for_overlaps:
+                    r = self.nodes[node_id]["radius"] * k
+                    num_overlaps = degree - 2
+                    overlap_volume = np.pi * r**3
+                    total_volume -= num_overlaps * overlap_volume
+            return float(total_volume)
+
+        if metric != "surface_area":
+            raise ValueError(f"metric must be 'surface_area' or 'volume', got {metric!r}")
+
+        total_area = 0.0
         for u, v in self.edges():
-            # Get node attributes
             xyz_u = self.nodes[u]["xyz"]
             xyz_v = self.nodes[v]["xyz"]
-            r_u = self.nodes[u]["radius"]
-            r_v = self.nodes[v]["radius"]
-
-            # Compute segment length
+            r_u = self.nodes[u]["radius"] * k
+            r_v = self.nodes[v]["radius"] * k
             h = np.linalg.norm(xyz_v - xyz_u)
-
-            # Slant height
             s = np.sqrt(h**2 + (r_u - r_v) ** 2)
+            total_area += np.pi * (r_u + r_v) * s
 
-            # Lateral surface area of truncated cone
-            lateral_area = np.pi * (r_u + r_v) * s
-            total_area += lateral_area
-
-        # Process nodes for end caps and overlap correction
         for node_id in self.nodes():
             degree = self.degree[node_id]
-            r = self.nodes[node_id]["radius"]
-
+            r = self.nodes[node_id]["radius"] * k
             if degree == 1:
-                # Add end cap area for terminal nodes
-                cap_area = np.pi * r**2
-                total_area += cap_area
-            elif degree > 2 and remove_overlaps:
-                # Subtract overlap correction for branch points
-                # One ball surface area per edge beyond 2
+                total_area += np.pi * r**2
+            elif degree > 2 and account_for_overlaps:
                 num_overlaps = degree - 2
-                # model overlap as a cylinder with radius r and length r
                 overlap_area = 2.0 * np.pi * r**2
                 total_area -= num_overlaps * overlap_area
 
-        return total_area
+        return float(total_area)
+
+    def _solve_uniform_radius_scale_factor(
+        self,
+        target: float,
+        *,
+        metric: str,
+        account_for_overlaps: bool,
+        rtol: float = 1e-9,
+        atol: float = 1e-12,
+    ) -> float:
+        """Solve for k>0 such that _metric_at_uniform_radius_scale(k, ...) == target."""
+
+        def m_at(kk: float) -> float:
+            return self._metric_at_uniform_radius_scale(
+                kk, metric=metric, account_for_overlaps=account_for_overlaps
+            )
+
+        def residual(kk: float) -> float:
+            return m_at(kk) - target
+
+        m1 = m_at(1.0)
+        if np.isclose(m1, target, rtol=rtol, atol=atol):
+            return 1.0
+
+        grow = 2.0
+
+        if m1 < target:
+            lo, m_lo = 1.0, m1
+            hi = 1.0
+            m_hi = m1
+            for _ in range(100):
+                lo, m_lo = hi, m_hi
+                hi = lo * grow
+                m_hi = m_at(hi)
+                if m_hi >= target or np.isclose(m_hi, target, rtol=rtol, atol=atol):
+                    break
+                if m_hi < m_lo:
+                    raise ValueError(
+                        "Target morphology metric exceeds the maximum achievable "
+                        "with the current cable model (e.g. volume with "
+                        "account_for_overlaps=True can decrease after a peak as "
+                        "radii grow). Try a different metric or overlap setting."
+                    )
+            else:
+                raise ValueError(
+                    "Could not bracket a uniform radius scale factor for the target metric."
+                )
+        else:
+            hi, m_hi = 1.0, m1
+            lo = 1.0
+            m_lo = m1
+            for _ in range(100):
+                hi, m_hi = lo, m_lo
+                lo = hi / grow
+                if lo < 1e-30:
+                    raise ValueError(
+                        "Could not scale radii down enough to reach the target metric."
+                    )
+                m_lo = m_at(lo)
+                if m_lo <= target or np.isclose(m_lo, target, rtol=rtol, atol=atol):
+                    break
+            else:
+                raise ValueError(
+                    "Could not bracket a uniform radius scale factor for the target metric."
+                )
+
+        if np.isclose(m_lo, target, rtol=rtol, atol=atol):
+            return float(lo)
+        if np.isclose(m_hi, target, rtol=rtol, atol=atol):
+            return float(hi)
+
+        a, b = float(lo), float(hi)
+        if residual(a) * residual(b) > 0:
+            raise ValueError(
+                "Failed to bracket the scale factor (non-monotonic metric or numerical issue)."
+            )
+
+        root = brentq(residual, a, b, xtol=atol, rtol=rtol, maxiter=200)
+        return float(root)
 
     def scale_radii_to_match_mesh(
-        self, mesh, metric: str = "surface_area", remove_overlaps: bool = False
+        self,
+        mesh,
+        metric: str = "surface_area",
+        account_for_overlaps: bool = False,
     ) -> float:
         """Scale all radii to match the mesh's surface area or volume.
 
-        This method computes a uniform scaling factor for all radii such that
-        the total surface area or volume of the cable model matches that of
-        the input mesh. The scaling preserves the relative proportions of radii.
+        This method finds a uniform scaling factor ``k`` for all radii such that
+        the cable model's surface area or volume (as defined by
+        :meth:`compute_surface_area` / :meth:`compute_volume`) equals that of the
+        input mesh. Because lateral frustum area and volume do not scale as pure
+        powers of ``k`` when edge lengths are fixed, ``k`` is computed with a
+        one-dimensional root solve (not ``sqrt`` / ``cbrt`` of a single ratio).
 
         Parameters
         ----------
@@ -324,9 +405,10 @@ class MorphologyGraph(nx.Graph):
             Which metric to match. Options are:
             - "surface_area": Match total surface area
             - "volume": Match total volume
-        remove_overlaps : bool, default False
-            If True, remove overlap correction for branch points when computing
-            the morphology's surface area or volume.
+        account_for_overlaps : bool, default False
+            If True, subtract branch-point overlap corrections when computing
+            the morphology's surface area or volume (same as for
+            :meth:`compute_surface_area` / :meth:`compute_volume`).
 
         Returns
         -------
@@ -370,31 +452,27 @@ class MorphologyGraph(nx.Graph):
             target_value = float(mesh_obj.area)
             if target_value <= 0.0:
                 raise ValueError("Mesh has zero or negative surface area")
-            current_value = self.compute_surface_area(remove_overlaps=remove_overlaps)
+            current_value = self.compute_surface_area(
+                account_for_overlaps=account_for_overlaps
+            )
         else:  # volume
             target_value = float(mesh_obj.volume)
             if target_value <= 0.0:
                 raise ValueError("Mesh has zero or negative volume")
-            current_value = self.compute_volume(remove_overlaps=remove_overlaps)
+            current_value = self.compute_volume(
+                account_for_overlaps=account_for_overlaps
+            )
 
         if current_value <= 0.0:
             raise ValueError(
                 f"Morphology has zero or negative {metric.replace('_', ' ')}"
             )
 
-        # For surface area: SA scales with r² (since SA ∝ r²)
-        # For volume: V scales with r³ (since V ∝ r³)
-        # So if we scale all radii by factor k:
-        #   - SA_new = k² * SA_old
-        #   - V_new = k³ * V_old
-        # Therefore:
-        #   - For SA: k = sqrt(target_SA / current_SA)
-        #   - For V: k = cbrt(target_V / current_V)
-
-        if metric == "surface_area":
-            scale_factor = np.sqrt(target_value / current_value)
-        else:  # volume
-            scale_factor = np.cbrt(target_value / current_value)
+        scale_factor = self._solve_uniform_radius_scale_factor(
+            target_value,
+            metric=metric,
+            account_for_overlaps=account_for_overlaps,
+        )
 
         # Apply scaling to all node radii
         for node_id in self.nodes():

@@ -26,7 +26,7 @@ def test_torus_creates_cycle():
     skel = SkeletonGraph.from_txt(str(DATA / "torus.polylines.txt"))
 
     # Fit morphology
-    morph = fit_morphology(mesh, skel, options=FitOptions(spacing=1.0))
+    morph = fit_morphology(mesh, skel, options=FitOptions(max_edge_length=1.0))
 
     # The torus polyline is closed, so we should have a cycle
     cycle_basis = nx.cycle_basis(morph)

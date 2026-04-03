@@ -1,0 +1,18 @@
+---
+description: Use package_references/ for real APIs; avoid inventing methods on deps
+alwaysApply: true
+---
+
+# Package APIs and `package_references/`
+
+Third-party and local packages are easy to misremember. **Do not assume or invent** methods, classes, or module paths that “sound right” — especially for **this repo’s own dependencies** (e.g. `swctools` from git) and other custom packages.
+
+## What to do
+
+1. **Prefer ground truth**: actual source in the workspace, installed package introspection when appropriate, or official docs.
+2. **Check `package_references/`** at the repo root for curated API snapshots. Today that includes **`package_references/SWCTOOLS_REFERENCE.md`** for `swctools`; more files may be added over time.
+3. **If the API is unclear or missing from references**, say so and **ask the user to add a reference file** under `package_references/` (same style as the swctools file is fine). Do not fill gaps with guessed APIs.
+
+## Rationale
+
+Reference files are cheap to maintain and give the agent a stable, project-approved view of evolving or non-obvious APIs.
