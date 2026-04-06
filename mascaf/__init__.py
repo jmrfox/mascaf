@@ -50,6 +50,9 @@ from .skeleton_optimizer import (  # noqa: E402
 from .validation import (  # noqa: E402
     Validation,
 )
+from .visualization import (  # noqa: E402
+    plot_surface_mesh_grid,
+)
 
 __all__ = [
     "__version__",
@@ -69,4 +72,6 @@ __all__ = [
     "SkeletonOptimizerOptions",
     # Validation
     "Validation",
+    # Visualization
+    "plot_surface_mesh_grid",
 ]
