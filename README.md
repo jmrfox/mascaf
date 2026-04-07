@@ -1,39 +1,31 @@
-# MaSCaF
+# MASCAF
 
-**MaSCaF** (Mesh and Skeleton Cable Fitting) is a Python package (`import mascaf`) for turning a **closed triangle mesh** and a **3D curve skeleton** into a **cable-graph morphology** with estimated radii, primarily exported as [SWC](http://www.neuronland.org/NLMorphologyConverter/MorphologyFormats/SWC/Spec.html).
+**MASCAF** (Mesh and Skeleton Cable Fitting) is a Python package for fitting **cable-graph morphology** (like an [SWC](http://www.neuronland.org/NLMorphologyConverter/MorphologyFormats/SWC/Spec.html) model) to a **closed triangle mesh** and a **3D curve skeleton**.
+This workflow was developed to create neuronal morphology models for multi-compartmental simulation from 3D surface meshes.
 
-The library intersects the mesh with planes normal to the skeleton, interprets cross-sections, and builds a graph whose edges act like truncated cones (frusta) between sampled points. It is built on [trimesh](https://trimesh.org/), [NetworkX](https://networkx.org/), and [swctools](https://github.com/jmrfox/swctools) for SWC data structures.
+While other software tools exist with similar purposes (e.g., fitting cable models to neuronal imaging data), MASCAF was developed to handle complex neuronal morphologies, specifically non-tree structures.
+By combining MASCAF with a topologically robust skeletonization procedure like that of [CGAL’s Triangulated Surface Mesh Skeletonization](https://doc.cgal.org/latest/Surface_mesh_skeletonization/index.html) (see instructions below), one forms a complete pipeline from 3D surface meshes to cable-graph models ready for multicompartmental simulators like [Arbor](https://arbor-sim.org/) and [NEURON](https://www.neuronsimulator.org).
 
----
-
-## Name and scope (formerly `mcf2swc`)
-
-The project was originally called **`mcf2swc`** because the intended workflow was: run **mean curvature flow (MCF)** skeletonization (MCFS) on a mesh, then convert that result into SWC. While we still **highly** recommend using CGAL's MCFS implementation, that name turned out to be too narrow.
-
-Nothing in MaSCaF assumes the skeleton came from MCF. The skeleton only needs to be expressible as the polylines (or saved GraphML) format that `SkeletonGraph` understands, in the **same coordinate frame** as the mesh. You can use any method that produces compatible centerlines (manual tracing, other skeletonizers, merged branches, graphs with cycles, and so on).
-
-**Output today is SWC-oriented** (via `MorphologyGraph` and `swctools.SWCModel`). The internal representation is a general graph with 3D points and radii, so **other export formats are a reasonable future extension** without changing the core fitting idea.
-
----
-
-## What you provide
+## What you need
 
 1. **Surface mesh** — Typically a watertight OBJ (or anything [trimesh](https://trimesh.org/) can load). `MeshManager` wraps loading and basic mesh utilities.
-2. **Skeleton** — A graph of 3D polylines: one text line per branch, with coordinates  
+2. **Skeleton** — The mesh's midline skeleton represented in 3D polylines format: one text line per branch, with coordinates  
    `N x1 y1 z1 x2 y2 z2 … xN yN zN`  
-   (`N` is the point count on that line). `SkeletonGraph.from_txt()` also supports **GraphML** (`.graphml` / `.xml`) as the native round-trip format after optimization.
+   (`N` is the number of vertices on that line). `SkeletonGraph.from_txt()` also supports **GraphML** (`.graphml` / `.xml`) as the native round-trip format after optimization.
 
 ---
 
 ## Installation
 
-From the repository root (uses [uv](https://github.com/astral-sh/uv) and `pyproject.toml`):
+Install in your own project environment by providing `pip` with the repo link. For instance, I like using [uv](https://docs.astral.sh/uv/).
 
 ```bash
-uv sync
+uv pip install https://github.com/jmrfox/mascaf.git
 ```
 
-Run code or tests inside that environment, for example:
+Or, if you want to work in a local clone of this repo, just do `uv sync`.
+
+Run code or tests inside that environment.
 
 ```bash
 uv run python your_script.py
@@ -44,11 +36,13 @@ uv run pytest
 
 ## End-to-end workflow (conceptual)
 
-1. **Load** the mesh and skeleton.
-2. **(Optional)** Run `SkeletonOptimizer` to nudge skeleton points toward a more medial, inside-the-volume placement (often helpful after MCF).
-3. **Call `fit_morphology`** to resample the skeleton along edges, slice the mesh with planes normal to the local tangent, and assign a radius at each sample.
-4. **Export** with `MorphologyGraph.to_swc_file()` (or `to_swc_model()` if you need an `SWCModel` object from `swctools`).
-5. **(Optional)** Compare mesh vs. cable metrics with `Validation`, or **uniformly rescale all radii** so cable surface area or volume matches the mesh via `MorphologyGraph.scale_radii_to_match_mesh()` (solved numerically because lateral frustum area does not scale as a single power of radius when edge lengths are fixed).
+0. **Skeletonize**: Run [CGAL-TSMS](https://doc.cgal.org/latest/Surface_mesh_skeletonization/index.html) on your 3D surface mesh to obtain skeleton, and save in polylines text format.
+1. **Initialize**: Load the mesh (`.obj`) and skeleton (`.polylines.txt`) using `MeshManager` and `SkeletonGraph`.
+2. **Optimize Skeleton** (optional): In the case of a low-quality skeleton, run `SkeletonOptimizer` to nudge skeleton points toward the midline.
+3. **Fit**: Call `fit_morphology` to downsample the skeleton to cable-graph nodes and fit radii at each sample.
+4. **Validate and Optimize** (optional): Compare mesh vs. cable metrics with `Validation`, or rescale all radii so cable surface area or volume matches the mesh via `MorphologyGraph.scale_radii_to_match_mesh()`.
+5. **Export**: Write out result with `MorphologyGraph.to_swc_file()`.
+6 **Simulate**: Load the `SWC` file as morphology in `Arbor` or `NEURON`. In case of cyclic topology, `SWC` file header will list cycle-closure directives.
 
 ---
 
@@ -89,7 +83,7 @@ uv run pytest
 
 ## SWC and cycles
 
-[SWC](http://www.neuronland.org/NLMorphologyConverter/MorphologyFormats/SWC/Spec.html) is inherently a **tree** (each node has one parent). MaSCaF keeps **arbitrary graph topology** in memory and only enforces a tree when writing SWC, by duplicating an endpoint on closing edges and recording the mapping in comments when requested.
+[SWC](http://www.neuronland.org/NLMorphologyConverter/MorphologyFormats/SWC/Spec.html) is inherently a **tree** (each node has one parent). MASCAF keeps **arbitrary graph topology** in memory and only enforces a tree when writing SWC, by duplicating an endpoint on closing edges and recording the mapping in comments when requested.
 
 ---
 
@@ -108,15 +102,17 @@ Native save/load for optimized skeletons uses **GraphML** via `SkeletonGraph.to_
 
 ## Mean curvature flow skeletonization with CGAL
 
-**Mean curvature flow** evolves a surface so that each point moves with velocity given by mean curvature; in practice it is a standard way to **collapse a shape toward a skeleton-like structure** while preserving topology in many settings.
+A convenient way to get a skeleton file compatible with MASCAF is [CGAL’s Triangulated Surface Mesh Skeletonization](https://doc.cgal.org/latest/Surface_mesh_skeletonization/index.html). 
+**Mean curvature flow** evolves a surface so that each point moves with velocity given by mean curvature; in practice it is a standard way to collapse a shape toward a skeleton-like structure while preserving the topology.
 
-A convenient way to get polylines compatible with MaSCaF is [CGAL’s Triangulated Surface Mesh Skeletonization](https://doc.cgal.org/latest/Surface_mesh_skeletonization/index.html). The CGAL distribution includes a demo application (**CGAL Lab**) that can run TSMS, as well as many other useful operations. Typical steps:
+The CGAL distribution includes a demo application (**CGAL Lab**) that can run TSMS, as well as many other useful operations. Typical steps:
 
-1. Open CGAL Lab, load your mesh.
-2. Run something like **Operations → Triangulated Surface Mesh Skeletonization → Mean Curvature Skeleton (Advanced)** (wording may vary slightly by version).
+0. Download [CGALLab](https://www.cgal.org/demo/6.1/CGALlab.zip).
+1. Open CGALLab and load your mesh.
+2. Run **Operations → Triangulated Surface Mesh Skeletonization → Mean Curvature Skeleton (Advanced)** (wording may vary slightly by version).
 3. Export the skeleton / fixed-points result to a **polylines** text file (one branch per line, `N x1 y1 z1 …` as above).
 
-That file is only **one** possible input; any tool that abides the same polyline convention will work.
+That file is only **one** possible skeleton input; any tool that abides the same polylines text convention will work.
 
 ---
 
@@ -193,4 +189,3 @@ morph.to_swc_file("shape.swc")
 
 - [SWC format overview](http://www.neuronland.org/NLMorphologyConverter/MorphologyFormats/SWC/Spec.html)  
 - [CGAL: Triangulated Surface Mesh Skeletonization](https://doc.cgal.org/latest/Surface_mesh_skeletonization/index.html)  
-- [Triangle mesh (Wikipedia)](https://en.wikipedia.org/wiki/Triangle_mesh)

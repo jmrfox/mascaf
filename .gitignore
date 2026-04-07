@@ -142,7 +142,7 @@ cython_debug/
 *.swo
 *~
 .windsurf
-
+.cursor
 
 # OS
 .DS_Store
