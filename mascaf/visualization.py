@@ -6,9 +6,12 @@ from pathlib import Path
 from typing import Any, Sequence, Union
 
 import matplotlib as mpl
+import matplotlib.colors as mcolors
+import matplotlib.pyplot as plt
 import numpy as np
 import pyvista as pv
 import trimesh
+from matplotlib.collections import PolyCollection
 from PIL import Image, ImageDraw, ImageFont
 
 MeshLike = Union[str, trimesh.Trimesh, pv.PolyData]
@@ -168,6 +171,189 @@ def _set_isometric_parallel_camera(plotter: pv.Plotter, parallel_scale: float) -
     plotter.camera.parallel_scale = float(parallel_scale)
 
 
+def _prepare_meshes_for_grid(
+    meshes: Sequence[MeshLike],
+    *,
+    grid_shape: tuple[int, int],
+    center_each: bool,
+    auto_rotate_each: bool,
+    view_dir: np.ndarray | None,
+    parallel_scale_margin: float,
+    zoom: float,
+) -> tuple[list[pv.PolyData], np.ndarray, float]:
+    n_rows, n_cols = int(grid_shape[0]), int(grid_shape[1])
+    if n_rows < 1 or n_cols < 1:
+        raise ValueError("grid_shape must be positive (n_rows, n_cols)")
+    capacity = n_rows * n_cols
+    if len(meshes) > capacity:
+        raise ValueError(
+            f"Need at least {len(meshes)} cells but grid_shape {grid_shape} has capacity {capacity}"
+        )
+
+    vdir = np.asarray(_DEFAULT_ISO_VIEW_DIR if view_dir is None else view_dir, dtype=float)
+    vdir = vdir / np.linalg.norm(vdir)
+
+    prepared: list[pv.PolyData] = []
+    radii: list[float] = []
+    for m in meshes:
+        poly = _to_polydata(m)
+        p, r = _prepare_mesh_polydata(
+            poly,
+            center=center_each,
+            auto_rotate=auto_rotate_each,
+            view_dir=vdir,
+        )
+        prepared.append(p)
+        radii.append(r)
+
+    shared_scale = max(radii) * float(parallel_scale_margin) if radii else 1.0
+    zoom_f = float(zoom) if float(zoom) > 1e-12 else 1.0
+    parallel_for_camera = shared_scale / zoom_f
+    return prepared, vdir, parallel_for_camera
+
+
+def _tri_faces(poly: pv.PolyData) -> np.ndarray:
+    tri = poly.triangulate()
+    faces = np.asarray(tri.faces, dtype=np.int64)
+    if faces.size == 0:
+        return np.empty((0, 3), dtype=np.int64)
+    if faces.size % 4 != 0:
+        raise ValueError("Unexpected triangulated face layout")
+    ff = faces.reshape(-1, 4)
+    if not np.all(ff[:, 0] == 3):
+        raise ValueError("Expected triangular faces after triangulate()")
+    return ff[:, 1:4]
+
+
+def _draw_vector_mesh_on_axis(
+    ax: Any,
+    poly: pv.PolyData,
+    *,
+    color: str,
+    view_dir: np.ndarray,
+    parallel_scale: float,
+) -> None:
+    pts = np.asarray(poly.points, dtype=float)
+    if pts.size == 0:
+        return
+    faces = _tri_faces(poly)
+    if len(faces) == 0:
+        return
+
+    # Same screen basis as camera setup: y=screen_up, x=horizontal, z=toward_camera.
+    frame = _isometric_target_frame(view_dir)
+    screen_up = frame[:, 0]
+    horizontal = frame[:, 1]
+    toward_camera = frame[:, 2]
+
+    x = pts @ horizontal
+    y = pts @ screen_up
+    z = pts @ toward_camera
+
+    # Per-face Lambert-style lighting for vector shading.
+    p0 = pts[faces[:, 0]]
+    p1 = pts[faces[:, 1]]
+    p2 = pts[faces[:, 2]]
+    fn = np.cross(p1 - p0, p2 - p0)
+    fn_norm = np.linalg.norm(fn, axis=1, keepdims=True)
+    fn_norm[fn_norm < 1e-12] = 1.0
+    fn = fn / fn_norm
+
+    light_dir = toward_camera + 0.45 * screen_up - 0.25 * horizontal
+    light_dir = light_dir / np.linalg.norm(light_dir)
+    lambert = np.clip(fn @ light_dir, 0.0, 1.0)
+    ambient = 0.35
+    diffuse = 0.65
+    intensity = ambient + diffuse * lambert
+
+    base_rgb = np.asarray(mcolors.to_rgb(color), dtype=float)
+    shaded = np.clip(base_rgb[None, :] * intensity[:, None], 0.0, 1.0)
+
+    depth = np.mean(z[faces], axis=1)
+    order = np.argsort(depth)  # far-to-near painter's algorithm
+    poly_paths = [np.column_stack([x[f], y[f]]) for f in faces[order]]
+    face_colors = shaded[order]
+
+    coll = PolyCollection(
+        poly_paths,
+        facecolors=face_colors,
+        edgecolors="none",
+        linewidths=0.0,
+        antialiaseds=False,
+    )
+    ax.add_collection(coll)
+
+    ax.set_aspect("equal", adjustable="box")
+    ax.set_ylim(-parallel_scale, parallel_scale)
+    xhalf = parallel_scale * float(ax.bbox.width / max(1.0, ax.bbox.height))
+    ax.set_xlim(-xhalf, xhalf)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+
+
+def _save_mesh_grid_svg_vector(
+    prepared: Sequence[pv.PolyData],
+    *,
+    grid_shape: tuple[int, int],
+    out_path: str | Path,
+    parallel_scale: float,
+    view_dir: np.ndarray,
+    mesh_color: str | None,
+    colors: Sequence[str] | None,
+    window_size: tuple[int, int] | None,
+    background: str,
+) -> Path:
+    out = Path(out_path)
+    if out.suffix.lower() != ".svg":
+        raise ValueError(f"SVG output path must end with .svg, got: {out}")
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    n_rows, n_cols = int(grid_shape[0]), int(grid_shape[1])
+    if window_size is None:
+        base_w, base_h = 320, 320
+        window_size = (n_cols * base_w, n_rows * base_h)
+
+    dpi = 100
+    fig_w = float(window_size[0]) / dpi
+    fig_h = float(window_size[1]) / dpi
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(fig_w, fig_h), dpi=dpi)
+    fig.patch.set_facecolor(background)
+
+    if n_rows == 1 and n_cols == 1:
+        ax_list = [axes]
+    elif n_rows == 1:
+        ax_list = list(axes)
+    elif n_cols == 1:
+        ax_list = list(axes)
+    else:
+        ax_list = [ax for row in axes for ax in row]
+
+    cmap = colors or ["#8ecae6", "#219ebc", "#023047", "#ffb703", "#fb8500", "#90a955"]
+    for idx, ax in enumerate(ax_list):
+        ax.set_facecolor(background)
+        if idx < len(prepared):
+            color = mesh_color if mesh_color is not None else cmap[idx % len(cmap)]
+            _draw_vector_mesh_on_axis(
+                ax,
+                prepared[idx],
+                color=color,
+                view_dir=view_dir,
+                parallel_scale=parallel_scale,
+            )
+        else:
+            ax.set_xticks([])
+            ax.set_yticks([])
+            for spine in ax.spines.values():
+                spine.set_visible(False)
+
+    fig.subplots_adjust(left=0, right=1, top=1, bottom=0, wspace=0, hspace=0)
+    fig.savefig(out, format="svg", facecolor=background)
+    plt.close(fig)
+    return out
+
+
 def _add_scale_bar_png_bottom_right(
     path: str | Path,
     *,
@@ -322,33 +508,15 @@ def plot_surface_mesh_grid(
         The plotter (already shown or screenshotted if requested).
     """
     n_rows, n_cols = int(grid_shape[0]), int(grid_shape[1])
-    if n_rows < 1 or n_cols < 1:
-        raise ValueError("grid_shape must be positive (n_rows, n_cols)")
-    capacity = n_rows * n_cols
-    if len(meshes) > capacity:
-        raise ValueError(
-            f"Need at least {len(meshes)} cells but grid_shape {grid_shape} has capacity {capacity}"
-        )
-
-    vdir = np.asarray(_DEFAULT_ISO_VIEW_DIR if view_dir is None else view_dir, dtype=float)
-    vdir = vdir / np.linalg.norm(vdir)
-
-    prepared: list[pv.PolyData] = []
-    radii: list[float] = []
-    for m in meshes:
-        poly = _to_polydata(m)
-        p, r = _prepare_mesh_polydata(
-            poly,
-            center=center_each,
-            auto_rotate=auto_rotate_each,
-            view_dir=vdir,
-        )
-        prepared.append(p)
-        radii.append(r)
-
-    shared_scale = max(radii) * float(parallel_scale_margin) if radii else 1.0
-    zoom_f = float(zoom) if float(zoom) > 1e-12 else 1.0
-    parallel_for_camera = shared_scale / zoom_f
+    prepared, vdir, parallel_for_camera = _prepare_meshes_for_grid(
+        meshes,
+        grid_shape=grid_shape,
+        center_each=center_each,
+        auto_rotate_each=auto_rotate_each,
+        view_dir=view_dir,
+        parallel_scale_margin=parallel_scale_margin,
+        zoom=zoom,
+    )
 
     if window_size is None:
         base_w, base_h = 320, 320
@@ -422,4 +590,142 @@ def plot_surface_mesh_grid(
 
     return plotter
 
+
+def save_surface_meshes_svg(
+    meshes: Sequence[MeshLike],
+    *,
+    out_dir: str | Path,
+    file_stems: Sequence[str] | None = None,
+    file_prefix: str = "mesh",
+    start_index: int = 0,
+    center_each: bool = True,
+    auto_rotate_each: bool = True,
+    view_dir: np.ndarray | None = None,
+    parallel_scale_margin: float = 1.08,
+    zoom: float = 1.0,
+    mesh_color: str | None = None,
+    colors: Sequence[str] | None = None,
+    window_size: tuple[int, int] | None = None,
+    background: str = "white",
+    off_screen: bool = True,
+) -> list[Path]:
+    """
+    Save one true-vector SVG file per mesh using the grid camera/framing style.
+
+    Parameters mirror :func:`plot_surface_mesh_grid` where applicable. Filenames are
+    either taken from ``file_stems`` or generated as ``{file_prefix}_{index:03d}.svg``.
+    """
+    if file_stems is not None and len(file_stems) != len(meshes):
+        raise ValueError("file_stems must match len(meshes) when provided")
+
+    out_root = Path(out_dir)
+    out_root.mkdir(parents=True, exist_ok=True)
+    written: list[Path] = []
+
+    for idx, mesh in enumerate(meshes):
+        if file_stems is None:
+            stem = f"{file_prefix}_{start_index + idx:03d}"
+        else:
+            stem = str(file_stems[idx]).strip()
+            if not stem:
+                raise ValueError("file_stems entries must be non-empty")
+        out_path = out_root / f"{stem}.svg"
+        prepared, vdir, parallel_for_camera = _prepare_meshes_for_grid(
+            [mesh],
+            grid_shape=(1, 1),
+            center_each=center_each,
+            auto_rotate_each=auto_rotate_each,
+            view_dir=view_dir,
+            parallel_scale_margin=parallel_scale_margin,
+            zoom=zoom,
+        )
+        written_path = _save_mesh_grid_svg_vector(
+            prepared,
+            grid_shape=(1, 1),
+            out_path=out_path,
+            parallel_scale=parallel_for_camera,
+            view_dir=vdir,
+            mesh_color=mesh_color,
+            colors=colors,
+            window_size=window_size,
+            background=background,
+        )
+        written.append(written_path)
+
+    return written
+
+
+def save_surface_mesh_grid_svg(
+    meshes: Sequence[MeshLike],
+    grid_shape: tuple[int, int],
+    *,
+    out_path: str | Path,
+    save_individual_meshes: bool = False,
+    individual_out_dir: str | Path | None = None,
+    individual_file_stems: Sequence[str] | None = None,
+    individual_file_prefix: str = "mesh",
+    individual_start_index: int = 0,
+    center_each: bool = True,
+    auto_rotate_each: bool = True,
+    view_dir: np.ndarray | None = None,
+    parallel_scale_margin: float = 1.08,
+    zoom: float = 1.0,
+    mesh_color: str | None = None,
+    colors: Sequence[str] | None = None,
+    window_size: tuple[int, int] | None = None,
+    background: str = "white",
+    off_screen: bool = True,
+) -> tuple[Path, list[Path]]:
+    """
+    Save a mesh grid figure as a true-vector SVG, with optional per-mesh SVGs.
+
+    Returns
+    -------
+    tuple[pathlib.Path, list[pathlib.Path]]
+        ``(grid_svg_path, individual_svg_paths)`` where the second list is empty
+        unless ``save_individual_meshes`` is True.
+    """
+    prepared, vdir, parallel_for_camera = _prepare_meshes_for_grid(
+        meshes,
+        grid_shape=grid_shape,
+        center_each=center_each,
+        auto_rotate_each=auto_rotate_each,
+        view_dir=view_dir,
+        parallel_scale_margin=parallel_scale_margin,
+        zoom=zoom,
+    )
+    grid_svg = _save_mesh_grid_svg_vector(
+        prepared,
+        grid_shape=grid_shape,
+        out_path=out_path,
+        parallel_scale=parallel_for_camera,
+        view_dir=vdir,
+        mesh_color=mesh_color,
+        colors=colors,
+        window_size=window_size,
+        background=background,
+    )
+
+    individual: list[Path] = []
+    if save_individual_meshes:
+        save_dir = Path(individual_out_dir) if individual_out_dir is not None else grid_svg.parent
+        individual = save_surface_meshes_svg(
+            meshes,
+            out_dir=save_dir,
+            file_stems=individual_file_stems,
+            file_prefix=individual_file_prefix,
+            start_index=individual_start_index,
+            center_each=center_each,
+            auto_rotate_each=auto_rotate_each,
+            view_dir=view_dir,
+            parallel_scale_margin=parallel_scale_margin,
+            zoom=zoom,
+            mesh_color=mesh_color,
+            colors=colors,
+            window_size=window_size,
+            background=background,
+            off_screen=off_screen,
+        )
+
+    return grid_svg, individual
 

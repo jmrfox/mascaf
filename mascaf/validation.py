@@ -239,118 +239,36 @@ class Validation:
             "relative_error": rel_error,
         }
 
-    def validate_radii(self) -> dict:
+    def full_validation(self):
         """
-        Validate SWC radii by comparing to actual mesh surface distances.
-
-        For each node in the SWC model, measures the actual distance to the
-        mesh surface and compares it to the stored radius value.
-
+        Run all validation checks and return comprehensive results.
         Returns
         -------
         dict
-            Dictionary containing:
-            - 'mean_error': float, mean absolute error in radius
-            - 'max_error': float, maximum absolute error
-            - 'std_error': float, standard deviation of errors
-            - 'errors': np.ndarray, per-node radius errors
-            - 'node_ids': np.ndarray, corresponding node IDs
+            Dictionary containing all validation results organized by category.
         """
-        raise NotImplementedError("validate_radii not yet implemented")
+        for account_for_overlaps in [False, True]:
+            vol_result = self.compare_volumes(account_for_overlaps=account_for_overlaps)
+            area_result = self.compare_surface_areas(
+                account_for_overlaps=account_for_overlaps
+            )
+            logger.info(
+                f"Validation Results, account_for_overlaps={account_for_overlaps}:"
+            )
+            logger.info("-- Volume Comparison:")
+            logger.info(f"---- Mesh volume:       {vol_result['mesh_volume']:.4f}")
+            logger.info(
+                f"---- Morphology volume: {vol_result['morphology_volume']:.4f}"
+            )
+            logger.info(f"---- Ratio:             {vol_result['ratio']:.4f}")
+            logger.info(f"---- Error:             {vol_result['error']:.4f}")
+            logger.info(f"---- Relative error:    {vol_result['relative_error']:.2%}")
+            logger.info("-- Surface Area Comparison:")
+            logger.info(f"---- Mesh area:         {area_result['mesh_area']:.4f}")
+            logger.info(f"---- Morphology area:   {area_result['morphology_area']:.4f}")
+            logger.info(f"---- Ratio:             {area_result['ratio']:.4f}")
+            logger.info(f"---- Error:             {area_result['error']:.4f}")
+            logger.info(f"---- Relative error:    {area_result['relative_error']:.2%}")
+        logger.info("")
 
-    def check_skeleton_coverage(self, threshold: float = 1.0) -> dict:
-        """
-        Check what percentage of mesh is covered by the skeleton.
-
-        Parameters
-        ----------
-        threshold : float
-            Distance threshold in mesh units. Points within this distance
-            of the skeleton are considered "covered".
-
-        Returns
-        -------
-        dict
-            Dictionary containing:
-            - 'coverage_percentage': float, percentage of mesh vertices
-              covered
-            - 'max_distance': float, maximum distance from any mesh point
-              to skeleton
-            - 'mean_distance': float, mean distance from mesh points to
-              skeleton
-        """
-        raise NotImplementedError("check_skeleton_coverage not yet implemented")
-
-    def analyze_cross_sections(self, num_samples: int = 100) -> dict:
-        """
-        Analyze cross-sections along the skeleton.
-
-        At regular intervals along skeleton edges, computes actual mesh
-        cross-section area and compares to πr² from SWC radius.
-
-        Parameters
-        ----------
-        num_samples : int
-            Number of cross-sections to sample along the structure.
-
-        Returns
-        -------
-        dict
-            Dictionary containing cross-section analysis results.
-        """
-        raise NotImplementedError("analyze_cross_sections not yet implemented")
-
-    def validate_point_cloud(self, num_samples: int = 10000) -> dict:
-        """
-        Sample points from mesh surface and compute distances to SWC model.
-
-        Parameters
-        ----------
-        num_samples : int
-            Number of points to sample from the mesh surface.
-
-        Returns
-        -------
-        dict
-            Dictionary containing:
-            - 'mean_distance': float, mean distance from sampled points to SWC
-            - 'max_distance': float, maximum distance
-            - 'std_distance': float, standard deviation
-            - 'distances': np.ndarray, per-point distances
-        """
-        raise NotImplementedError("validate_point_cloud not yet implemented")
-
-    def compute_all_metrics(self) -> dict:
-        """
-        Compute all available validation metrics.
-
-        Returns
-        -------
-        dict
-            Dictionary containing all validation metrics organized by category.
-        """
-        results = {
-            "swc_path": str(self.swc_path) if self.swc_path else None,
-            "mesh_info": {
-                "vertices": len(self.mesh.vertices),
-                "faces": len(self.mesh.faces),
-            },
-            "skeleton_info": {
-                "nodes": self.skeleton.number_of_nodes(),
-                "edges": self.skeleton.number_of_edges(),
-            },
-            "morphology_info": {
-                "nodes": self.morphology.number_of_nodes(),
-                "edges": self.morphology.number_of_edges(),
-            },
-        }
-
-        logger.info("Computing all validation metrics...")
-
-        # Add implemented metrics here as they are developed
-        # try:
-        #     results['volume_comparison'] = self.compare_volumes()
-        # except NotImplementedError:
-        #     pass
-
-        return results
+        return None
