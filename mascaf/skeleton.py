@@ -574,6 +574,7 @@ class SkeletonGraph(nx.Graph):
         min_length: Optional[float] = None,
         min_length_percentile: Optional[float] = None,
         tolerance: float = 1e-6,
+        iterative: bool = True,
         verbose: bool = False,
     ) -> int:
         """In-place version of `prune_short_branches`.
