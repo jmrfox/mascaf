@@ -238,6 +238,9 @@ class SkeletonOptimizer:
         # Update edge lengths after optimization
         self._update_edge_lengths()
 
+        if self.options.check_surface_crossing:
+            self.check_surface_crossing()
+
         if self.options.verbose:
             logger.info("Optimization complete")
 
