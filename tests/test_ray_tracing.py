@@ -13,7 +13,7 @@ from mascaf import (
 # Load TS2 mesh and skeleton
 print("Loading TS2 mesh and skeleton...")
 mesh_mgr = MeshManager(mesh_path="data/mesh/processed/TS2.obj")
-skeleton = SkeletonGraph.from_txt("data/mcf_skeletons/TS2_qst0.6_mcst5.polylines.txt")
+skeleton = SkeletonGraph.from_txt("data/mcf_skeletons/TS2_qst0.5_mcst5.polylines.txt")
 
 # Test ray tracing-based optimization
 print("=" * 70)
@@ -21,11 +21,11 @@ print("Testing ray tracing-based medial axis centering")
 print("=" * 70)
 
 options = SkeletonOptimizerOptions(
-    n_rays=4,
-    max_iterations=30,
+    n_rays=6,
+    max_iterations=3,
     step_size=0.1,
     preserve_terminal_nodes=True,
-    smoothing_weight=0.3,
+    smoothing_weight=0.1,
     verbose=True,
 )
 

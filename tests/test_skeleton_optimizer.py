@@ -20,7 +20,8 @@ class TestSkeletonOptimizerOptions:
 
     def test_default_options(self):
         opts = SkeletonOptimizerOptions()
-        assert opts.check_surface_crossing is True
+        assert opts.do_snapping is True
+        assert opts.do_forcing is True
         assert opts.max_iterations == 100
         assert opts.step_size == 0.1
         assert opts.convergence_threshold == 1e-4
@@ -111,7 +112,13 @@ class TestSkeletonOptimizer:
     ):
         """Test surface crossing detection for skeleton inside mesh."""
         optimizer = SkeletonOptimizer(cylinder_skeleton_inside, cylinder_mesh)
-        has_crossing, num_outside, max_dist = optimizer.check_surface_crossing()
+        outside_nodes, has_crossing, num_outside, max_dist = (
+            optimizer.get_outside_nodes()
+        )
+        assert outside_nodes == []
+        assert has_crossing is False
+        assert num_outside == 0
+        assert max_dist == 0.0
 
         points = cylinder_skeleton_inside.get_all_positions()
         inside_check = cylinder_mesh.contains(points)
@@ -124,7 +131,10 @@ class TestSkeletonOptimizer:
     ):
         """Test surface crossing detection for skeleton with points outside mesh."""
         optimizer = SkeletonOptimizer(cylinder_skeleton_outside, cylinder_mesh)
-        has_crossing, num_outside, max_dist = optimizer.check_surface_crossing()
+        outside_nodes, has_crossing, num_outside, max_dist = (
+            optimizer.get_outside_nodes()
+        )
+        assert len(outside_nodes) == num_outside
         assert has_crossing is True
         assert num_outside > 0
         assert max_dist > 0.0
@@ -142,20 +152,25 @@ class TestSkeletonOptimizer:
 
     def test_optimize_skeleton_outside(self, cylinder_mesh, cylinder_skeleton_outside):
         """Test optimization of skeleton with points outside mesh."""
-        opts = SkeletonOptimizerOptions(max_iterations=50, step_size=0.1, verbose=False)
+        opts = SkeletonOptimizerOptions(
+            max_iterations=50,
+            step_size=0.1,
+            verbose=False,
+        )
         optimizer = SkeletonOptimizer(cylinder_skeleton_outside, cylinder_mesh, opts)
 
-        has_crossing_before, num_outside_before, _ = optimizer.check_surface_crossing()
+        _, has_crossing_before, num_outside_before, _ = optimizer.get_outside_nodes()
         assert has_crossing_before is True
         assert num_outside_before > 0
 
         optimized = optimizer.optimize()
 
         optimizer_after = SkeletonOptimizer(optimized, cylinder_mesh, opts)
-        has_crossing_after, num_outside_after, _ = (
-            optimizer_after.check_surface_crossing()
+        _, has_crossing_after, num_outside_after, _ = (
+            optimizer_after.get_outside_nodes()
         )
 
+        assert isinstance(has_crossing_after, bool)
         assert num_outside_after <= num_outside_before
 
     def test_optimize_skeleton_offset(self, cylinder_mesh, cylinder_skeleton_offset):

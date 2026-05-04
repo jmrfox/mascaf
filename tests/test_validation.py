@@ -1,10 +1,8 @@
 from pathlib import Path
 
-import numpy as np
-
 from mascaf import (
+    CableFitter,
     example_mesh,
-    fit_morphology,
     FitOptions,
     SkeletonGraph,
     Validation,
@@ -24,7 +22,7 @@ def test_cylinder_trace_non_empty():
 
     # Use a reasonable spacing to ensure several samples along the path
     opts = FitOptions(max_edge_length=0.5, radius_strategy="equivalent_area")
-    G = fit_morphology(mesh, skel, options=opts)
+    G = CableFitter(opts).fit(mesh, skel)
 
     assert G.number_of_nodes() > 0, "Cylinder trace produced no nodes"
     assert G.number_of_edges() > 0, "Cylinder trace produced no edges"
@@ -46,7 +44,7 @@ def test_torus_trace_non_empty():
 
     # Spacing small enough to capture curvature around the torus major ring
     opts = FitOptions(max_edge_length=0.5, radius_strategy="equivalent_area")
-    G = fit_morphology(mesh, skel, options=opts)
+    G = CableFitter(opts).fit(mesh, skel)
 
     assert G.number_of_nodes() > 0, "Torus trace produced no nodes"
     assert G.number_of_edges() > 0, "Torus trace produced no edges"

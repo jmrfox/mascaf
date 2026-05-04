@@ -3,11 +3,10 @@
 from pathlib import Path
 import tempfile
 
-import numpy as np
 import networkx as nx
 
 from mascaf import (
-    fit_morphology,
+    CableFitter,
     FitOptions,
     SkeletonGraph,
     example_mesh,
@@ -20,13 +19,13 @@ DATA = ROOT / "data" / "demo"
 
 
 def test_torus_creates_cycle():
-    """Test that fitting a closed torus polyline creates a cycle in the MorphologyGraph."""
+    """Test that fitting a closed torus polyline creates a cycle."""
     # Load torus mesh and polylines
     mesh = example_mesh("torus")
     skel = SkeletonGraph.from_txt(str(DATA / "torus.polylines.txt"))
 
     # Fit morphology
-    morph = fit_morphology(mesh, skel, options=FitOptions(max_edge_length=1.0))
+    morph = CableFitter(FitOptions(max_edge_length=1.0)).fit(mesh, skel)
 
     # The torus polyline is closed, so we should have a cycle
     cycle_basis = nx.cycle_basis(morph)
@@ -41,7 +40,11 @@ def test_torus_creates_cycle():
     assert morph.number_of_edges() > 0
 
     # Export to SWC and verify cycle breaking
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".swc", delete=False) as f:
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        suffix=".swc",
+        delete=False,
+    ) as f:
         temp_path = f.name
 
     try:

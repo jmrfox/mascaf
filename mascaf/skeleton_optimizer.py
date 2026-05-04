@@ -37,8 +37,13 @@ class SkeletonOptimizerOptions:
     Configuration for skeleton optimization.
 
     Attributes:
-        check_surface_crossing: If True, check whether skeleton points cross
-            the mesh surface before optimization. Default: True
+        do_snapping: If True, run phase 1 which snaps nodes outside the mesh
+            surface back inside. Default: True
+        do_forcing: If True, run phase 2 which iteratively pushes nodes toward
+            the medial axis. Default: True
+        snap_distance_multiplier: Multiplier applied to the displacement vector
+            during snapping. Values > 1.0 overshoot slightly to ensure the node
+            lands inside the mesh. Default: 1.1
         max_iterations: Maximum number of optimization iterations. Default: 100
         step_size: Step size for moving points toward the center. Smaller values
             are more conservative. Default: 0.1
@@ -59,7 +64,9 @@ class SkeletonOptimizerOptions:
         verbose: If True, print optimization progress. Default: False
     """
 
-    check_surface_crossing: bool = True
+    do_snapping: bool = True
+    do_forcing: bool = True
+    snap_distance_multiplier: float = 1.1
     max_iterations: int = 100
     step_size: float = 0.1
     convergence_threshold: float = 1e-4
@@ -107,27 +114,37 @@ class SkeletonOptimizer:
         self.options = options or SkeletonOptimizerOptions()
 
         self._surface_crossing_detected = False
+        self._outside_nodes: list = []
         self._optimization_history = []
 
-    def check_surface_crossing(self) -> Tuple[bool, int, float]:
+    def get_outside_nodes(self) -> Tuple[list, bool, int, float]:
         """
-        Check if any skeleton nodes are outside the mesh surface.
+        Identify skeleton nodes that are outside the mesh surface.
 
         Returns:
-            Tuple of (has_crossing, num_outside_nodes, max_distance)
+            Tuple of
+            (outside_node_ids, has_crossing, num_outside_nodes, max_distance)
+            - outside_node_ids: List of node IDs outside the mesh
             - has_crossing: True if any nodes are outside the mesh
             - num_outside_nodes: Number of nodes outside the mesh
             - max_distance: Maximum distance to surface for outside nodes
         """
         if self.skeleton.number_of_nodes() == 0:
-            return False, 0, 0.0
+            self._outside_nodes = []
+            self._surface_crossing_detected = False
+            return [], False, 0, 0.0
 
+        node_ids = list(self.skeleton.nodes())
         all_pts = self.skeleton.get_all_positions()
 
         try:
             inside_mask = self.mesh.contains(all_pts)
             outside_mask = ~inside_mask
             num_outside = int(np.sum(outside_mask))
+
+            outside_node_ids = [
+                node_ids[i] for i, is_out in enumerate(outside_mask) if is_out
+            ]
 
             max_dist = 0.0
             if num_outside > 0:
@@ -139,6 +156,7 @@ class SkeletonOptimizer:
 
             has_crossing = num_outside > 0
             self._surface_crossing_detected = has_crossing
+            self._outside_nodes = outside_node_ids
 
             if self.options.verbose:
                 if has_crossing:
@@ -151,30 +169,85 @@ class SkeletonOptimizer:
                 else:
                     logger.info("No surface crossing detected - all nodes inside mesh")
 
-            return has_crossing, num_outside, max_dist
+            return outside_node_ids, has_crossing, num_outside, max_dist
 
         except Exception as e:
-            logger.warning("Failed to check surface crossing: %s", e)
-            return False, 0, 0.0
+            logger.warning("Failed to identify outside nodes: %s", e)
+            self._outside_nodes = []
+            return [], False, 0, 0.0
 
     def optimize(self) -> SkeletonGraph:
         """
-        Optimize the skeleton by pushing nodes toward the mesh medial axis.
+        Optimize the skeleton in two phases.
+
+        Phase 1 (snapping): Move any nodes outside the mesh surface back inside
+        by displacing them toward the nearest surface point.
+
+        Phase 2 (forcing): Iteratively push all movable nodes toward the medial
+        axis using ray-based centering and smoothing forces.
 
         Returns:
             Optimized skeleton graph
         """
-        if self.options.check_surface_crossing:
-            self.check_surface_crossing()
-
         if self.options.verbose:
             logger.info("Starting skeleton optimization...")
             logger.info("  Nodes: %d", self.skeleton.number_of_nodes())
-            logger.info("  Max iterations: %d", self.options.max_iterations)
+
+        if self.options.do_snapping:
+            self._run_snapping_phase()
+
+        if self.options.do_forcing:
+            self._run_forcing_phase()
+
+        self._update_edge_lengths()
+        self.get_outside_nodes()
+
+        if self.options.verbose:
+            logger.info("Optimization complete")
+
+        return self.skeleton
+
+    def _run_snapping_phase(self) -> None:
+        """
+        Phase 1: Snap nodes that are outside the mesh surface back inside.
+
+        For each outside node, the displacement vector from the node to the
+        nearest surface point is scaled by snap_distance_multiplier and applied
+        to move the node to (or slightly past) the surface.
+        """
+        outside_node_ids, has_crossing, num_outside, _ = self.get_outside_nodes()
+
+        if self.options.verbose:
+            logger.info("Phase 1 - Snapping: %d nodes outside mesh", num_outside)
+
+        if not has_crossing:
+            return
+
+        for node in outside_node_ids:
+            pos = self.skeleton.get_node_position(node)
+            direction, dist = self._compute_snap_direction(pos)
+            if dist < 1e-10:
+                continue
+            displacement = direction * dist * self.options.snap_distance_multiplier
+            self.skeleton.set_node_position(node, pos + displacement)
+
+        if self.options.verbose:
+            logger.info("Phase 1 - Snapping complete")
+
+    def _run_forcing_phase(self) -> None:
+        """
+        Phase 2: Iteratively push nodes toward the medial axis.
+
+        Each iteration visits every movable node and applies a centering force
+        (and optional smoothing force) to nudge it toward the medial axis.
+        """
+        if self.options.verbose:
+            logger.info(
+                "Phase 2 - Forcing: max %d iterations", self.options.max_iterations
+            )
             logger.info("  Step size: %.4f", self.options.step_size)
             logger.info("  Smoothing weight: %.4f", self.options.smoothing_weight)
 
-        # Get node sets for preservation
         terminal_nodes = (
             self.skeleton.get_terminal_nodes()
             if self.options.preserve_terminal_nodes
@@ -186,46 +259,47 @@ class SkeletonOptimizer:
             else set()
         )
 
-        # Optimization loop
         for iteration in range(self.options.max_iterations):
-            # Store old positions
             old_positions = self.skeleton.get_all_positions()
 
-            # Optimize each node
+            if old_positions.size == 0:
+                if self.options.verbose:
+                    logger.info("Phase 2 - Forcing skipped because skeleton is empty")
+                break
+
             for node in self.skeleton.nodes():
-                # Skip terminal nodes if preserve_terminal_nodes is True
                 if node in terminal_nodes:
                     continue
-
-                # Skip branch nodes if preserve_branch_nodes is True
                 if node in branch_nodes:
                     continue
 
-                # Get current position
                 pos = self.skeleton.get_node_position(node)
 
-                # Compute centering direction
                 direction = self._compute_centering_direction(pos)
 
-                # Compute smoothing direction if needed
                 smoothing_direction = np.zeros(3)
                 if self.options.smoothing_weight > 0:
                     smoothing_direction = self._compute_smoothing_direction_for_node(
                         node
                     )
 
-                # Combine directions
                 total_direction = (
                     1.0 - self.options.smoothing_weight
                 ) * direction + self.options.smoothing_weight * smoothing_direction
 
-                # Update position
                 new_pos = pos + self.options.step_size * total_direction
                 self.skeleton.set_node_position(node, new_pos)
 
-            # Check convergence
             new_positions = self.skeleton.get_all_positions()
-            movement = np.linalg.norm(new_positions - old_positions, axis=1).mean()
+            if new_positions.size == 0:
+                movement = 0.0
+            else:
+                movement = float(
+                    np.linalg.norm(
+                        new_positions - old_positions,
+                        axis=1,
+                    ).mean()
+                )
 
             if self.options.verbose and iteration % 10 == 0:
                 logger.info("  Iteration %d: avg movement = %.6f", iteration, movement)
@@ -235,16 +309,8 @@ class SkeletonOptimizer:
                     logger.info("  Converged at iteration %d", iteration)
                 break
 
-        # Update edge lengths after optimization
-        self._update_edge_lengths()
-
-        if self.options.check_surface_crossing:
-            self.check_surface_crossing()
-
         if self.options.verbose:
-            logger.info("Optimization complete")
-
-        return self.skeleton
+            logger.info("Phase 2 - Forcing complete")
 
     def _update_edge_lengths(self) -> None:
         """Update edge lengths after node positions have changed."""
@@ -336,15 +402,22 @@ class SkeletonOptimizer:
             logger.warning("Failed to compute centering direction: %s", e)
             return self._compute_closest_point_direction(point)
 
-    def _compute_closest_point_direction(self, point: np.ndarray) -> np.ndarray:
+    def _compute_snap_direction(self, point: np.ndarray) -> Tuple[np.ndarray, float]:
         """
-        Fallback method for points outside the mesh: move toward closest surface point.
+        Compute the displacement direction and distance from an outside node
+        to the nearest point on the mesh surface.
+
+        This is the canonical snap direction used by the snapping phase.
+        Replace this method to use a different snapping strategy.
 
         Args:
-            point: (3,) array representing a single point
+            point: (3,) array representing a node position outside the mesh
 
         Returns:
-            (3,) array representing the direction to move (unit vector)
+            Tuple of (direction, distance)
+            - direction: (3,) unit vector pointing from the node toward the
+              nearest surface point
+            - distance: Euclidean distance to that surface point
         """
         try:
             from trimesh.proximity import closest_point
@@ -353,16 +426,29 @@ class SkeletonOptimizer:
             surface_point = cp[0]
 
             to_surface = surface_point - point
-            dist_to_surface = np.linalg.norm(to_surface)
+            dist = float(np.linalg.norm(to_surface))
 
-            if dist_to_surface < 1e-10:
-                return np.zeros(3)
+            if dist < 1e-10:
+                return np.zeros(3), 0.0
 
-            return to_surface / dist_to_surface
+            return to_surface / dist, dist
 
         except Exception as e:
-            logger.warning("Failed to compute closest point direction: %s", e)
-            return np.zeros(3)
+            logger.warning("Failed to compute snap direction: %s", e)
+            return np.zeros(3), 0.0
+
+    def _compute_closest_point_direction(self, point: np.ndarray) -> np.ndarray:
+        """
+        Fallback for points outside the mesh: move toward closest surface point.
+
+        Args:
+            point: (3,) array representing a single point
+
+        Returns:
+            (3,) array representing the direction to move (unit vector)
+        """
+        direction, _ = self._compute_snap_direction(point)
+        return direction
 
     def _get_uniform_sphere_directions(self, n_points: int) -> np.ndarray:
         """
@@ -476,9 +562,8 @@ class SkeletonOptimizer:
             "total_length": self.skeleton.get_total_length(),
         }
 
-        if self.options.check_surface_crossing:
-            has_crossing, num_outside, max_dist = self.check_surface_crossing()
-            stats["nodes_outside_mesh"] = num_outside
-            stats["max_distance_outside"] = max_dist
+        _, _, num_outside, max_dist = self.get_outside_nodes()
+        stats["nodes_outside_mesh"] = num_outside
+        stats["max_distance_outside"] = max_dist
 
         return stats

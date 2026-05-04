@@ -5,7 +5,7 @@ Provides a `SkeletonGraph` class that inherits from networkx.Graph to:
 - Represent skeleton as a graph with xyz coordinates on each node
 - Load from polylines array or polylines text format: `N x1 y1 z1 x2 y2 z2 ...`
 - Identify terminal nodes (degree 1) and branch nodes (degree 3+)
-- Every point from input polylines becomes a node in the graph
+- Every point from input polylines becomes a node in the SkeletonGraph
 
 Note: This class represents skeleton topology as a graph where:
 - Nodes have 'pos' attribute with (x, y, z) coordinates
@@ -33,9 +33,9 @@ class SkeletonGraph(nx.Graph):
 
     Inherits from networkx.Graph. Each node has a 'pos' attribute storing
     (x, y, z) coordinates. Edges represent connections between consecutive
-    points along polylines.
+    points along polylines data.
 
-    Every point from input polylines becomes a node.
+    Every point from input polylines file becomes a node.
     Endpoints within tolerance are merged into single nodes.
 
     Terminal nodes (degree 1) are isolated endpoints.

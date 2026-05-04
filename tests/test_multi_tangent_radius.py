@@ -5,9 +5,9 @@ Tests for multi-tangent radius computation in graph fitting.
 import numpy as np
 import pytest
 from mascaf import (
+    CableFitter,
     SkeletonGraph,
     FitOptions,
-    fit_morphology,
     example_mesh,
 )
 
@@ -73,7 +73,7 @@ class TestMultiTangentRadius:
 
     def test_tangent_computation_terminal_nodes(self, linear_skeleton):
         """Test tangent computation for terminal nodes."""
-        from mascaf.graph_fitting import _compute_node_tangents
+        from mascaf.cable_fitting import _compute_node_tangents
 
         # Terminal nodes should have 1 tangent
         terminal_tangents = _compute_node_tangents(linear_skeleton, 0)
@@ -82,7 +82,7 @@ class TestMultiTangentRadius:
 
     def test_tangent_computation_branch_nodes(self, y_shaped_skeleton):
         """Test tangent computation for branch nodes."""
-        from mascaf.graph_fitting import _compute_node_tangents
+        from mascaf.cable_fitting import _compute_node_tangents
 
         # Center branch node (degree 4) should have 4 tangents
         center_tangents = _compute_node_tangents(y_shaped_skeleton, 2)
@@ -103,7 +103,7 @@ class TestMultiTangentRadius:
                 multi_tangent_reduction=method,
             )
 
-            morphology = fit_morphology(cylinder_mesh, y_shaped_skeleton, opts)
+            morphology = CableFitter(opts).fit(cylinder_mesh, y_shaped_skeleton)
 
             # Should successfully create morphology
             assert len(morphology.nodes) > 0
@@ -133,7 +133,7 @@ class TestMultiTangentRadius:
                 multi_tangent_reduction="median",
             )
 
-            morphology = fit_morphology(cylinder_mesh, y_shaped_skeleton, opts)
+            morphology = CableFitter(opts).fit(cylinder_mesh, y_shaped_skeleton)
 
             # Should successfully create morphology
             assert len(morphology.nodes) > 0
@@ -152,7 +152,7 @@ class TestMultiTangentRadius:
             multi_tangent_reduction="median",
         )
 
-        morphology = fit_morphology(cylinder_mesh, linear_skeleton, opts)
+        morphology = CableFitter(opts).fit(cylinder_mesh, linear_skeleton)
 
         # Should successfully create morphology
         assert len(morphology.nodes) > 0
@@ -172,11 +172,11 @@ class TestMultiTangentRadius:
         )
 
         with pytest.raises(ValueError, match="Unknown reduction method"):
-            fit_morphology(cylinder_mesh, y_shaped_skeleton, opts)
+            CableFitter(opts).fit(cylinder_mesh, y_shaped_skeleton)
 
     def test_radius_reduction_function(self):
         """Test the radius reduction function directly."""
-        from mascaf.graph_fitting import _reduce_multi_radii
+        from mascaf.cable_fitting import _reduce_multi_radii
 
         # Test with multiple radii
         radii = [1.0, 2.0, 3.0, 4.0]
@@ -199,16 +199,13 @@ class TestMultiTangentRadius:
 
     def test_skeleton_node_radii_computation(self, cylinder_mesh, y_shaped_skeleton):
         """Test the skeleton node radii computation function."""
-        from mascaf.graph_fitting import _compute_skeleton_node_radii
-        from scipy.spatial import cKDTree
+        from mascaf.cable_fitting import _compute_skeleton_node_radii
 
         opts = FitOptions(max_edge_length=0.5, radius_strategy="equivalent_area")
-        eps = 1e-4 * max(cylinder_mesh.bounding_box.extents)
-        V = np.asarray(cylinder_mesh.vertices, dtype=float)
-        v_kdtree = cKDTree(V)
-
         node_radii = _compute_skeleton_node_radii(
-            y_shaped_skeleton, cylinder_mesh, opts, eps, V, v_kdtree
+            y_shaped_skeleton,
+            cylinder_mesh,
+            opts,
         )
 
         # Should have radii for all nodes

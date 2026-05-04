@@ -4,8 +4,8 @@ import tempfile
 import numpy as np
 
 from mascaf import (
+    CableFitter,
     example_mesh,
-    fit_morphology,
     FitOptions,
     SkeletonGraph,
     SWCModel,
@@ -22,7 +22,7 @@ def test_swc_save_reload_preserves_edges():
     skel = SkeletonGraph.from_txt(str(DATA / "cylinder.polylines.txt"))
 
     opts = FitOptions(max_edge_length=1.0, radius_strategy="equivalent_area")
-    morph_graph = fit_morphology(mesh, skel, options=opts)
+    morph_graph = CableFitter(opts).fit(mesh, skel)
 
     assert morph_graph.number_of_nodes() > 0, "Original graph has no nodes"
     assert morph_graph.number_of_edges() > 0, "Original graph has no edges"

@@ -13,7 +13,7 @@ Public API:
 - SkeletonGraph
 - SWCModel (from swctools)
 - MorphologyGraph
-- FitOptions, fit_morphology
+- FitOptions, CableFitter
 """
 
 from __future__ import annotations
@@ -33,12 +33,9 @@ logging.getLogger(__name__).addHandler(logging.NullHandler())
 # Re-export primary classes and functions for convenient access at package level
 from swctools import SWCModel  # noqa: E402
 
+from .cable_fitting import CableFitter, FitOptions  # noqa: E402
 from .mesh import MeshManager, example_mesh  # noqa: E402
 from .skeleton import SkeletonGraph  # noqa: E402
-from .graph_fitting import (  # noqa: E402
-    FitOptions,
-    fit_morphology,
-)
 from .morphology_graph import (  # noqa: E402
     MorphologyGraph,
     Junction,
@@ -65,8 +62,8 @@ __all__ = [
     # SWC model (from swctools)
     "SWCModel",
     # Tracing API
+    "CableFitter",
     "FitOptions",
-    "fit_morphology",
     "MorphologyGraph",
     "Junction",
     # Skeleton optimization

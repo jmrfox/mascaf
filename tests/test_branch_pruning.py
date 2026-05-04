@@ -2,20 +2,17 @@
 Test branch pruning on TS2 skeleton.
 """
 
-from pathlib import Path
 import pytest
 import numpy as np
 from mascaf import SkeletonGraph
 
-
-ROOT = Path(__file__).resolve().parents[1]
-DATA = ROOT / "data" / "mcf_skeletons"
+from tests.data_config import get_ts2_skeleton_path
 
 
 @pytest.fixture
 def ts2_skeleton():
     """Load TS2 skeleton for testing."""
-    skeleton_path = DATA / "TS2_qst0.6_mcst5.polylines.txt"
+    skeleton_path = get_ts2_skeleton_path()
     if not skeleton_path.exists():
         pytest.skip(f"TS2 skeleton not found at {skeleton_path}")
     return SkeletonGraph.from_txt(str(skeleton_path))
