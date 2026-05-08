@@ -8,6 +8,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import brentq
 
+from .graph3d import Graph3D
 from swctools import SWCModel, FrustaSet, plot_model
 
 
@@ -26,7 +27,7 @@ class Junction:
     radius: float
 
 
-class MorphologyGraph(nx.Graph):
+class MorphologyGraph(Graph3D):
     """
     Graph representation of neuronal morphology with radii.
 
@@ -39,6 +40,8 @@ class MorphologyGraph(nx.Graph):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         # Populated by trace.build_traced_skeleton_graph for optional SWC export adjustments
+
+    position_attr = "xyz"
 
     @classmethod
     def from_swc_file(cls, path: str) -> "MorphologyGraph":
@@ -140,6 +143,22 @@ class MorphologyGraph(nx.Graph):
             xyz=j.xyz,
             radius=float(j.radius),
         )
+
+    def copy(self) -> "MorphologyGraph":
+        """Create a copy of the morphology graph with copied node arrays."""
+        new_graph = MorphologyGraph()
+        new_graph.graph.update(dict(self.graph))
+
+        for node, data in self.nodes(data=True):
+            node_data = dict(data)
+            if "xyz" in node_data:
+                node_data["xyz"] = np.asarray(node_data["xyz"], dtype=float).copy()
+            new_graph.add_node(node, **node_data)
+
+        for u, v, data in self.edges(data=True):
+            new_graph.add_edge(u, v, **dict(data))
+
+        return new_graph
 
     def to_swc_model(self) -> SWCModel:
         """Convert MorphologyGraph to a SWCModel instance.
@@ -265,9 +284,7 @@ class MorphologyGraph(nx.Graph):
                 r_u = self.nodes[u]["radius"] * k
                 r_v = self.nodes[v]["radius"] * k
                 h = np.linalg.norm(xyz_v - xyz_u)
-                total_volume += (np.pi * h / 3.0) * (
-                    r_u**2 + r_u * r_v + r_v**2
-                )
+                total_volume += (np.pi * h / 3.0) * (r_u**2 + r_u * r_v + r_v**2)
             for node_id in self.nodes():
                 degree = self.degree[node_id]
                 if degree > 2 and account_for_overlaps:
@@ -278,7 +295,9 @@ class MorphologyGraph(nx.Graph):
             return float(total_volume)
 
         if metric != "surface_area":
-            raise ValueError(f"metric must be 'surface_area' or 'volume', got {metric!r}")
+            raise ValueError(
+                f"metric must be 'surface_area' or 'volume', got {metric!r}"
+            )
 
         total_area = 0.0
         for u, v in self.edges():

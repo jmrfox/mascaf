@@ -9,6 +9,7 @@ import numpy as np
 import shapely.geometry as sgeom
 import trimesh
 
+from .basis_optimizer import BasisOptimizer, BasisOptimizerOptions
 from .mesh import MeshManager
 from .morphology_graph import MorphologyGraph
 from .skeleton import SkeletonGraph
@@ -45,6 +46,9 @@ class FitOptions:
         multi_tangent_reduction: Reduction applied to the per-edge radii
             computed at each node. One of "mean", "min", "max", or
             "median".
+        basis_optimizer_options: Optional configuration for geometry
+            optimization of the downsampled MorphologyGraph basis prior to
+            radius fitting.
     """
 
     max_edge_length: float = 1.0
@@ -52,6 +56,7 @@ class FitOptions:
     section_probe_eps: float = 1e-4
     section_probe_tries: int = 3
     multi_tangent_reduction: str = "median"
+    basis_optimizer_options: Optional[BasisOptimizerOptions] = None
 
 
 class CableFitter:
@@ -89,6 +94,13 @@ class CableFitter:
             skeleton,
             float(self.options.max_edge_length),
         )
+        if self.options.basis_optimizer_options is not None:
+            logger.info("Optimizing morphology basis before radius fitting")
+            morphology = BasisOptimizer(
+                morphology,
+                mesh_obj,
+                self.options.basis_optimizer_options,
+            ).optimize()
         _compute_morphology_node_radii(morphology, mesh_obj, self.options)
         logger.info(
             "Finished cable fit with %d morphology nodes and %d morphology " "edges",

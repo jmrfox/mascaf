@@ -25,7 +25,7 @@ def test_prune_short_branches_basic(ts2_skeleton):
     pruned = ts2_skeleton.prune_short_branches(min_length=10.0, verbose=False)
 
     assert pruned.number_of_nodes() <= original_count
-    assert pruned.total_points() <= ts2_skeleton.total_points()
+    assert pruned.number_of_nodes() <= ts2_skeleton.number_of_nodes()
 
 
 def test_prune_short_branches_length_threshold(ts2_skeleton):

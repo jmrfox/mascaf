@@ -33,17 +33,16 @@ logging.getLogger(__name__).addHandler(logging.NullHandler())
 # Re-export primary classes and functions for convenient access at package level
 from swctools import SWCModel  # noqa: E402
 
+from .basis_optimizer import BasisOptimizer, BasisOptimizerOptions  # noqa: E402
 from .cable_fitting import CableFitter, FitOptions  # noqa: E402
+from .graph3d import Graph3D  # noqa: E402
 from .mesh import MeshManager, example_mesh  # noqa: E402
 from .skeleton import SkeletonGraph  # noqa: E402
 from .morphology_graph import (  # noqa: E402
     MorphologyGraph,
     Junction,
 )
-from .skeleton_optimizer import (  # noqa: E402
-    SkeletonOptimizer,
-    SkeletonOptimizerOptions,
-)
+
 from .validation import (  # noqa: E402
     Validation,
 )
@@ -58,17 +57,17 @@ __all__ = [
     # Mesh and skeleton
     "MeshManager",
     "example_mesh",
+    "Graph3D",
     "SkeletonGraph",
     # SWC model (from swctools)
     "SWCModel",
     # Tracing API
     "CableFitter",
     "FitOptions",
+    "BasisOptimizer",
+    "BasisOptimizerOptions",
     "MorphologyGraph",
     "Junction",
-    # Skeleton optimization
-    "SkeletonOptimizer",
-    "SkeletonOptimizerOptions",
     # Validation
     "Validation",
     # Visualization

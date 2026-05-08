@@ -35,4 +35,5 @@ apidump = { git = "https://github.com/jmrfox/apidump.git" }
 [dependency-groups]
 dev = [
     "apidump",
+    "jupytext>=1.19.1",
 ]

@@ -22,12 +22,15 @@ from typing import List, Optional, Sequence, Set
 
 import networkx as nx
 import numpy as np
+from swctools import PointSet
+
+from .graph3d import Graph3D
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
 
-class SkeletonGraph(nx.Graph):
+class SkeletonGraph(Graph3D):
     """
     Graph-based skeleton representation with xyz coordinates on nodes.
 
@@ -54,6 +57,8 @@ class SkeletonGraph(nx.Graph):
         super().__init__(**attr)
         self.graph["tolerance"] = tolerance
         self._next_node_id = 0
+
+    position_attr = "pos"
 
     @classmethod
     def from_polylines(
@@ -258,36 +263,6 @@ class SkeletonGraph(nx.Graph):
         self._next_node_id += 1
         return node_id
 
-    # ---------------------------------------------------------------------
-    # Node classification
-    # ---------------------------------------------------------------------
-    def get_terminal_nodes(self) -> Set[int]:
-        """
-        Get all terminal nodes (degree 1 - isolated endpoints).
-
-        Returns:
-            Set of node IDs that are terminal nodes
-        """
-        return {node for node in self.nodes() if self.degree(node) == 1}
-
-    def get_branch_nodes(self) -> Set[int]:
-        """
-        Get all branch nodes (degree 3+ - where multiple branches meet).
-
-        Returns:
-            Set of node IDs that are branch nodes
-        """
-        return {node for node in self.nodes() if self.degree(node) >= 3}
-
-    def get_continuation_nodes(self) -> Set[int]:
-        """
-        Get all continuation nodes (degree 2 - intermediate points).
-
-        Returns:
-            Set of node IDs that are continuation nodes
-        """
-        return {node for node in self.nodes() if self.degree(node) == 2}
-
     def detect_branch_points(self, tolerance: float = 1e-6) -> dict:
         """
         Detect branch points and endpoints in the skeleton.
@@ -370,75 +345,6 @@ class SkeletonGraph(nx.Graph):
             G.add_edge(u, v, **(data or {}))
         return G
 
-    def is_terminal_node(self, node: int) -> bool:
-        """Check if a node is a terminal node (degree 1)."""
-        return self.degree(node) == 1
-
-    def is_branch_node(self, node: int) -> bool:
-        """Check if a node is a branch node (degree 3+)."""
-        return self.degree(node) >= 3
-
-    def is_continuation_node(self, node: int) -> bool:
-        """Check if a node is a continuation node (degree 2)."""
-        return self.degree(node) == 2
-
-    # ---------------------------------------------------------------------
-    # Coordinate access and manipulation
-    # ---------------------------------------------------------------------
-    def get_node_position(self, node: int) -> np.ndarray:
-        """
-        Get the (x, y, z) position of a node.
-
-        Args:
-            node: Node ID
-
-        Returns:
-            (3,) array with xyz coordinates
-        """
-        return np.array(self.nodes[node]["pos"])
-
-    def set_node_position(self, node: int, pos: np.ndarray) -> None:
-        """
-        Set the (x, y, z) position of a node.
-
-        Args:
-            node: Node ID
-            pos: (3,) array with xyz coordinates
-        """
-        self.nodes[node]["pos"] = np.array(pos, dtype=float)
-
-    def get_all_positions(self) -> np.ndarray:
-        """
-        Get positions of all nodes as an array.
-
-        Returns:
-            (N, 3) array where N is the number of nodes
-        """
-        if self.number_of_nodes() == 0:
-            return np.zeros((0, 3), dtype=float)
-
-        positions = []
-        for node in sorted(self.nodes()):
-            positions.append(self.get_node_position(node))
-
-        return np.array(positions)
-
-    def set_all_positions(self, positions: np.ndarray) -> None:
-        """
-        Set positions of all nodes from an array.
-
-        Args:
-            positions: (N, 3) array where N is the number of nodes
-        """
-        if positions.shape[0] != self.number_of_nodes():
-            raise ValueError(
-                f"Position array has {positions.shape[0]} rows but graph has "
-                f"{self.number_of_nodes()} nodes"
-            )
-
-        for i, node in enumerate(sorted(self.nodes())):
-            self.set_node_position(node, positions[i])
-
     def _edge_length(self, u: int, v: int) -> float:
         data = self.get_edge_data(u, v) or {}
         length = data.get("length")
@@ -498,17 +404,17 @@ class SkeletonGraph(nx.Graph):
         """
         _ = tolerance
         if self.number_of_nodes() == 0:
-            return self.copy_skeleton()
+            return self.copy()
 
         if min_length is None and min_length_percentile is None:
             raise ValueError("Must specify either min_length or min_length_percentile")
 
         # Determine threshold from the original graph
-        original = self.copy_skeleton()
+        original = self.copy()
         original_branch_lengths = list(original.compute_branch_lengths().values())
         if len(original_branch_lengths) == 0:
             # Nothing to prune
-            return self.copy_skeleton()
+            return self.copy()
 
         if min_length is not None:
             threshold = float(min_length)
@@ -520,7 +426,7 @@ class SkeletonGraph(nx.Graph):
         if verbose:
             logger.info("Pruning branches with length < %.4f", threshold)
 
-        current = self.copy_skeleton()
+        current = self.copy()
         while True:
             terminal_nodes = sorted(
                 [n for n in current.nodes() if current.degree(n) == 1]
@@ -598,56 +504,13 @@ class SkeletonGraph(nx.Graph):
         return before - self.number_of_nodes()
 
     # ---------------------------------------------------------------------
-    # Basic properties
-    # ---------------------------------------------------------------------
-    def total_points(self) -> int:
-        """
-        Get total number of points in the skeleton.
-
-        Since every point is a node, this is just the number of nodes.
-
-        Returns:
-            Total number of points in the skeleton
-        """
-        return self.number_of_nodes()
-
-    def bounds(self) -> Optional[dict]:
-        """
-        Get bounding box of all node positions.
-
-        Returns:
-            Dictionary with 'x', 'y', 'z' keys, each containing (min, max) tuple,
-            or None if graph is empty
-        """
-        if self.number_of_nodes() == 0:
-            return None
-
-        positions = self.get_all_positions()
-        lo = positions.min(axis=0)
-        hi = positions.max(axis=0)
-
-        return {
-            "x": (float(lo[0]), float(hi[0])),
-            "y": (float(lo[1]), float(hi[1])),
-            "z": (float(lo[2]), float(hi[2])),
-        }
-
-    def centroid(self) -> Optional[np.ndarray]:
-        """
-        Get centroid of all node positions.
-
-        Returns:
-            (3,) array with centroid coordinates, or None if graph is empty
-        """
-        if self.number_of_nodes() == 0:
-            return None
-
-        positions = self.get_all_positions()
-        return positions.mean(axis=0)
-
-    # ---------------------------------------------------------------------
     # Conversion
     # ---------------------------------------------------------------------
+    def to_point_set(self) -> PointSet:
+        """Return all skeleton node locations as a PointSet."""
+        positions = self.get_all_positions()
+        return PointSet.from_points(positions)
+
     def to_polylines(self) -> List[np.ndarray]:
         """
         Convert the graph back to a list of polyline arrays.
@@ -758,7 +621,7 @@ class SkeletonGraph(nx.Graph):
     # ---------------------------------------------------------------------
     # Copy
     # ---------------------------------------------------------------------
-    def copy_skeleton(self) -> "SkeletonGraph":
+    def copy(self) -> "SkeletonGraph":
         """
         Create a deep copy of the skeleton graph.
 
@@ -805,7 +668,7 @@ class SkeletonGraph(nx.Graph):
             "num_terminal_nodes": len(terminal_nodes),
             "num_branch_nodes": len(branch_nodes),
             "num_continuation_nodes": len(continuation_nodes),
-            "total_points": self.total_points(),
+            "total_points": self.number_of_nodes(),
         }
 
         if edge_lengths:

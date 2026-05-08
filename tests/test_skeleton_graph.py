@@ -4,6 +4,7 @@ Test SkeletonGraph functionality.
 
 import pytest
 import numpy as np
+from swctools import PointSet
 from mascaf import SkeletonGraph
 
 from tests.data_config import get_ts2_skeleton_path
@@ -135,9 +136,18 @@ def test_to_polylines_conversion(ts2_skeleton):
         assert pl.shape[0] >= 2  # At least 2 points per polyline
 
 
+def test_to_point_set(ts2_skeleton):
+    """Test conversion of node locations to a PointSet."""
+    point_set = ts2_skeleton.to_point_set()
+
+    assert isinstance(point_set, PointSet)
+    assert len(point_set.points) == ts2_skeleton.number_of_nodes()
+    assert np.allclose(np.asarray(point_set.points), ts2_skeleton.get_all_positions())
+
+
 def test_copy_skeleton(ts2_skeleton):
     """Test skeleton copying."""
-    copy = ts2_skeleton.copy_skeleton()
+    copy = ts2_skeleton.copy()
 
     # Should have same structure
     assert copy.number_of_nodes() == ts2_skeleton.number_of_nodes()
@@ -175,13 +185,11 @@ def test_save_and_reload(ts2_skeleton, tmp_path):
     assert ts2_skeleton.get_total_length() > 0
 
 
-def test_total_points(ts2_skeleton):
-    """Test total_points method."""
-    total_points = ts2_skeleton.total_points()
+def test_node_count(ts2_skeleton):
+    """Test that node count matches the number of graph nodes."""
+    node_count = ts2_skeleton.number_of_nodes()
 
-    # Should equal number of nodes
-    assert total_points == ts2_skeleton.number_of_nodes()
-    assert total_points > 0
+    assert node_count > 0
 
 
 def test_edge_lengths(ts2_skeleton):
