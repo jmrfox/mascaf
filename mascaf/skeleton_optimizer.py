@@ -61,7 +61,6 @@ class SkeletonOptimizerOptions:
         smoothing_weight: Weight for smoothing regularization to maintain
             skeleton smoothness (0 = no smoothing, 1 = strong smoothing).
             Default: 0.5
-        verbose: If True, print optimization progress. Default: False
     """
 
     do_snapping: bool = True
@@ -75,7 +74,6 @@ class SkeletonOptimizerOptions:
     n_rays: int = 6
     fallback_distance: float = 10.0
     smoothing_weight: float = 0.5
-    verbose: bool = False
 
 
 class SkeletonOptimizer:
@@ -116,6 +114,14 @@ class SkeletonOptimizer:
         self._surface_crossing_detected = False
         self._outside_nodes: list = []
         self._optimization_history = []
+        logger.debug(
+            "Initialized SkeletonOptimizer with %d nodes, %d edges, "
+            "do_snapping=%s, do_forcing=%s",
+            self.skeleton.number_of_nodes(),
+            self.skeleton.number_of_edges(),
+            self.options.do_snapping,
+            self.options.do_forcing,
+        )
 
     def get_outside_nodes(self) -> Tuple[list, bool, int, float]:
         """
@@ -132,10 +138,14 @@ class SkeletonOptimizer:
         if self.skeleton.number_of_nodes() == 0:
             self._outside_nodes = []
             self._surface_crossing_detected = False
+            logger.debug("Outside-node query on empty skeleton")
             return [], False, 0, 0.0
 
         node_ids = list(self.skeleton.nodes())
         all_pts = self.skeleton.get_all_positions()
+        logger.debug(
+            "Checking %d skeleton nodes against mesh containment", len(node_ids)
+        )
 
         try:
             inside_mask = self.mesh.contains(all_pts)
@@ -157,17 +167,21 @@ class SkeletonOptimizer:
             has_crossing = num_outside > 0
             self._surface_crossing_detected = has_crossing
             self._outside_nodes = outside_node_ids
+            logger.debug(
+                "Outside-node detection complete: has_crossing=%s, outside_nodes=%s",
+                has_crossing,
+                outside_node_ids,
+            )
 
-            if self.options.verbose:
-                if has_crossing:
-                    logger.info(
-                        "Surface crossing detected: %d/%d nodes outside mesh (max distance: %.4f)",
-                        num_outside,
-                        len(all_pts),
-                        max_dist,
-                    )
-                else:
-                    logger.info("No surface crossing detected - all nodes inside mesh")
+            if has_crossing:
+                logger.info(
+                    "Surface crossing detected: %d/%d nodes outside mesh (max distance: %.4f)",
+                    num_outside,
+                    len(all_pts),
+                    max_dist,
+                )
+            else:
+                logger.info("No surface crossing detected - all nodes inside mesh")
 
             return outside_node_ids, has_crossing, num_outside, max_dist
 
@@ -189,21 +203,38 @@ class SkeletonOptimizer:
         Returns:
             Optimized skeleton graph
         """
-        if self.options.verbose:
-            logger.info("Starting skeleton optimization...")
-            logger.info("  Nodes: %d", self.skeleton.number_of_nodes())
+        logger.info("Starting skeleton optimization...")
+        logger.info("  Nodes: %d", self.skeleton.number_of_nodes())
+        logger.debug(
+            "Optimization options: snap_distance_multiplier=%.4f, "
+            "max_iterations=%d, step_size=%.4f, convergence_threshold=%.6g, "
+            "preserve_terminal_nodes=%s, preserve_branch_nodes=%s, n_rays=%d, "
+            "fallback_distance=%.4f, smoothing_weight=%.4f",
+            self.options.snap_distance_multiplier,
+            self.options.max_iterations,
+            self.options.step_size,
+            self.options.convergence_threshold,
+            self.options.preserve_terminal_nodes,
+            self.options.preserve_branch_nodes,
+            self.options.n_rays,
+            self.options.fallback_distance,
+            self.options.smoothing_weight,
+        )
 
         if self.options.do_snapping:
             self._run_snapping_phase()
+        else:
+            logger.debug("Skipping snapping phase because do_snapping is False")
 
         if self.options.do_forcing:
             self._run_forcing_phase()
+        else:
+            logger.debug("Skipping forcing phase because do_forcing is False")
 
         self._update_edge_lengths()
         self.get_outside_nodes()
 
-        if self.options.verbose:
-            logger.info("Optimization complete")
+        logger.info("Optimization complete")
 
         return self.skeleton
 
@@ -217,22 +248,32 @@ class SkeletonOptimizer:
         """
         outside_node_ids, has_crossing, num_outside, _ = self.get_outside_nodes()
 
-        if self.options.verbose:
-            logger.info("Phase 1 - Snapping: %d nodes outside mesh", num_outside)
+        logger.info("Phase 1 - Snapping: %d nodes outside mesh", num_outside)
+        logger.debug("Snapping candidate nodes: %s", outside_node_ids)
 
         if not has_crossing:
+            logger.debug("No snapping required because all nodes are inside the mesh")
             return
 
         for node in outside_node_ids:
             pos = self.skeleton.get_node_position(node)
             direction, dist = self._compute_snap_direction(pos)
             if dist < 1e-10:
+                logger.debug(
+                    "Skipping snap for node %s because distance is negligible", node
+                )
                 continue
             displacement = direction * dist * self.options.snap_distance_multiplier
+            logger.debug(
+                "Snapping node %s from %s with distance %.6f and displacement %s",
+                node,
+                pos,
+                dist,
+                displacement,
+            )
             self.skeleton.set_node_position(node, pos + displacement)
 
-        if self.options.verbose:
-            logger.info("Phase 1 - Snapping complete")
+        logger.info("Phase 1 - Snapping complete")
 
     def _run_forcing_phase(self) -> None:
         """
@@ -241,12 +282,9 @@ class SkeletonOptimizer:
         Each iteration visits every movable node and applies a centering force
         (and optional smoothing force) to nudge it toward the medial axis.
         """
-        if self.options.verbose:
-            logger.info(
-                "Phase 2 - Forcing: max %d iterations", self.options.max_iterations
-            )
-            logger.info("  Step size: %.4f", self.options.step_size)
-            logger.info("  Smoothing weight: %.4f", self.options.smoothing_weight)
+        logger.info("Phase 2 - Forcing: max %d iterations", self.options.max_iterations)
+        logger.info("  Step size: %.4f", self.options.step_size)
+        logger.info("  Smoothing weight: %.4f", self.options.smoothing_weight)
 
         terminal_nodes = (
             self.skeleton.get_terminal_nodes()
@@ -258,19 +296,26 @@ class SkeletonOptimizer:
             if self.options.preserve_branch_nodes
             else set()
         )
+        logger.debug(
+            "Protected nodes for forcing: %d terminal, %d branch",
+            len(terminal_nodes),
+            len(branch_nodes),
+        )
 
         for iteration in range(self.options.max_iterations):
             old_positions = self.skeleton.get_all_positions()
+            logger.debug("Starting forcing iteration %d", iteration)
 
             if old_positions.size == 0:
-                if self.options.verbose:
-                    logger.info("Phase 2 - Forcing skipped because skeleton is empty")
+                logger.info("Phase 2 - Forcing skipped because skeleton is empty")
                 break
 
             for node in self.skeleton.nodes():
                 if node in terminal_nodes:
+                    logger.debug("Skipping terminal node %s during forcing", node)
                     continue
                 if node in branch_nodes:
+                    logger.debug("Skipping branch node %s during forcing", node)
                     continue
 
                 pos = self.skeleton.get_node_position(node)
@@ -288,6 +333,16 @@ class SkeletonOptimizer:
                 ) * direction + self.options.smoothing_weight * smoothing_direction
 
                 new_pos = pos + self.options.step_size * total_direction
+                logger.debug(
+                    "Iteration %d node %s: pos=%s center=%s smooth=%s total=%s new_pos=%s",
+                    iteration,
+                    node,
+                    pos,
+                    direction,
+                    smoothing_direction,
+                    total_direction,
+                    new_pos,
+                )
                 self.skeleton.set_node_position(node, new_pos)
 
             new_positions = self.skeleton.get_all_positions()
@@ -301,24 +356,31 @@ class SkeletonOptimizer:
                     ).mean()
                 )
 
-            if self.options.verbose and iteration % 10 == 0:
-                logger.info("  Iteration %d: avg movement = %.6f", iteration, movement)
+            logger.info("  Iteration %d: avg movement = %.6f", iteration, movement)
+            logger.debug(
+                "Completed forcing iteration %d with movement %.6f", iteration, movement
+            )
 
             if movement < self.options.convergence_threshold:
-                if self.options.verbose:
-                    logger.info("  Converged at iteration %d", iteration)
+                logger.info("  Converged at iteration %d", iteration)
+                logger.debug(
+                    "Stopping forcing because movement %.6f is below threshold %.6f",
+                    movement,
+                    self.options.convergence_threshold,
+                )
                 break
 
-        if self.options.verbose:
-            logger.info("Phase 2 - Forcing complete")
+        logger.info("Phase 2 - Forcing complete")
 
     def _update_edge_lengths(self) -> None:
         """Update edge lengths after node positions have changed."""
+        logger.debug("Updating lengths for %d edges", self.skeleton.number_of_edges())
         for u, v in self.skeleton.edges():
             pos_u = self.skeleton.get_node_position(u)
             pos_v = self.skeleton.get_node_position(v)
             length = float(np.linalg.norm(pos_v - pos_u))
             self.skeleton.edges[u, v]["length"] = length
+            logger.debug("Updated edge (%s, %s) length to %.6f", u, v, length)
 
     def _compute_smoothing_direction_for_node(self, node: int) -> np.ndarray:
         """
@@ -334,8 +396,14 @@ class SkeletonOptimizer:
             (3,) array representing the smoothing direction (unit vector)
         """
         neighbors = list(self.skeleton.neighbors(node))
+        logger.debug(
+            "Computing smoothing direction for node %s with neighbors %s",
+            node,
+            neighbors,
+        )
 
         if len(neighbors) == 0:
+            logger.debug("Node %s has no neighbors; smoothing direction is zero", node)
             return np.zeros(3)
 
         # Get current position
@@ -352,8 +420,19 @@ class SkeletonOptimizer:
         norm = np.linalg.norm(direction)
 
         if norm > 1e-10:
+            logger.debug(
+                "Smoothing direction for node %s: avg_neighbor_pos=%s, raw=%s, norm=%.6f",
+                node,
+                avg_neighbor_pos,
+                direction,
+                norm,
+            )
             return direction / norm
         else:
+            logger.debug(
+                "Node %s already matches neighbor average; smoothing direction is zero",
+                node,
+            )
             return np.zeros(3)
 
     def _compute_centering_direction(self, point: np.ndarray) -> np.ndarray:
@@ -371,8 +450,14 @@ class SkeletonOptimizer:
         """
         # Check if point is inside the mesh
         is_inside = self.mesh.contains(point.reshape(1, 3))[0]
+        logger.debug(
+            "Computing centering direction at point %s (inside=%s)", point, is_inside
+        )
         if not is_inside:
             # Point is outside - move toward closest surface point
+            logger.debug(
+                "Point %s is outside mesh; using closest-point direction", point
+            )
             return self._compute_closest_point_direction(point)
 
         try:
@@ -394,8 +479,15 @@ class SkeletonOptimizer:
             # Normalize to unit vector
             force_mag = np.linalg.norm(force)
             if force_mag > 1e-10:
+                logger.debug(
+                    "Centering force at point %s: raw_force=%s, magnitude=%.6f",
+                    point,
+                    force,
+                    force_mag,
+                )
                 return force / force_mag
             else:
+                logger.debug("Centering force at point %s is negligible", point)
                 return np.zeros(3)
 
         except Exception as e:
@@ -429,8 +521,15 @@ class SkeletonOptimizer:
             dist = float(np.linalg.norm(to_surface))
 
             if dist < 1e-10:
+                logger.debug("Snap direction at point %s is zero-length", point)
                 return np.zeros(3), 0.0
 
+            logger.debug(
+                "Snap direction at point %s: surface_point=%s, distance=%.6f",
+                point,
+                surface_point,
+                dist,
+            )
             return to_surface / dist, dist
 
         except Exception as e:
@@ -448,6 +547,9 @@ class SkeletonOptimizer:
             (3,) array representing the direction to move (unit vector)
         """
         direction, _ = self._compute_snap_direction(point)
+        logger.debug(
+            "Closest-point fallback direction at point %s: %s", point, direction
+        )
         return direction
 
     def _get_uniform_sphere_directions(self, n_points: int) -> np.ndarray:
@@ -465,6 +567,7 @@ class SkeletonOptimizer:
         """
         # Special case: axis-aligned rays for debugging
         if n_points == 6:
+            logger.debug("Using axis-aligned sphere directions for n_points=6")
             return np.array(
                 [
                     [1.0, 0.0, 0.0],  # +X
@@ -495,6 +598,8 @@ class SkeletonOptimizer:
         norms = np.linalg.norm(directions, axis=1, keepdims=True)
         directions = directions / (norms + 1e-10)
 
+        logger.debug("Generated %d Fibonacci-sphere directions", n_points)
+
         return directions
 
     def _ray_distance_to_surface(
@@ -513,6 +618,7 @@ class SkeletonOptimizer:
             Distance to the surface along the ray direction. Returns probe_distance
             if no intersection is found.
         """
+        logger.debug("Tracing ray from point %s in direction %s", point, direction)
         try:
             # Cast a ray from the point in the given direction
             ray_origins = point.reshape(1, 3)
@@ -525,20 +631,18 @@ class SkeletonOptimizer:
 
             if len(locations) == 0:
                 # No intersection found - use fallback distance
-                if self.options.verbose:
-                    logger.debug("Ray found no intersection, using fallback distance")
+                logger.debug("Ray found no intersection, using fallback distance")
                 return self.options.fallback_distance
 
             # Find the closest intersection point
             distances = np.linalg.norm(locations - point, axis=1)
             min_dist = float(np.min(distances))
 
-            if self.options.verbose and len(locations) > 1:
-                logger.debug(
-                    "Ray found %d intersections, using closest (%.4f)",
-                    len(locations),
-                    min_dist,
-                )
+            logger.debug(
+                "Ray found %d intersections, using closest (%.4f)",
+                len(locations),
+                min_dist,
+            )
 
             return min_dist
 
@@ -553,6 +657,7 @@ class SkeletonOptimizer:
         Returns:
             Dictionary containing optimization statistics
         """
+        logger.debug("Collecting optimization statistics")
         stats = {
             "surface_crossing_detected": self._surface_crossing_detected,
             "num_nodes": self.skeleton.number_of_nodes(),
@@ -565,5 +670,7 @@ class SkeletonOptimizer:
         _, _, num_outside, max_dist = self.get_outside_nodes()
         stats["nodes_outside_mesh"] = num_outside
         stats["max_distance_outside"] = max_dist
+
+        logger.debug("Optimization statistics: %s", stats)
 
         return stats
