@@ -143,6 +143,7 @@ cython_debug/
 *~
 .windsurf
 .cursor
+.codiumignore
 
 # OS
 .DS_Store
