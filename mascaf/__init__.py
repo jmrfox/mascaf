@@ -35,6 +35,13 @@ from swctools import SWCModel  # noqa: E402
 
 from .basis_optimizer import BasisOptimizer, BasisOptimizerOptions  # noqa: E402
 from .cable_fitting import CableFitter, FitOptions  # noqa: E402
+from .cgal import (  # noqa: E402
+    CGALBuildError,
+    CGALCommandResult,
+    CGALError,
+    CGALExecutableNotFoundError,
+    CGALMeshProcessor,
+)
 from .graph3d import Graph3D  # noqa: E402
 from .mesh import MeshManager, example_mesh  # noqa: E402
 from .skeleton import SkeletonGraph  # noqa: E402
@@ -64,6 +71,11 @@ __all__ = [
     # Tracing API
     "CableFitter",
     "FitOptions",
+    "CGALError",
+    "CGALBuildError",
+    "CGALExecutableNotFoundError",
+    "CGALCommandResult",
+    "CGALMeshProcessor",
     "BasisOptimizer",
     "BasisOptimizerOptions",
     "MorphologyGraph",
