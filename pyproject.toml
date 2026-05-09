@@ -28,6 +28,12 @@ dependencies = [
     "trimesh>=4.8.1",
 ]
 
+[tool.hatch.build.targets.wheel]
+packages = ["mascaf"]
+
+[tool.hatch.build.targets.wheel.sources]
+"mascaf" = "mascaf"
+
 [tool.uv.sources]
 swctools = { git = "https://github.com/jmrfox/swctools.git" }
 apidump = { git = "https://github.com/jmrfox/apidump.git" }

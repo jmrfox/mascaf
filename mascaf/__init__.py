@@ -36,11 +36,14 @@ from swctools import SWCModel  # noqa: E402
 from .basis_optimizer import BasisOptimizer, BasisOptimizerOptions  # noqa: E402
 from .cable_fitting import CableFitter, FitOptions  # noqa: E402
 from .cgal import (  # noqa: E402
+    CGALBuilder,
     CGALBuildError,
     CGALCommandResult,
+    CGALConfig,
     CGALError,
     CGALExecutableNotFoundError,
     CGALMeshProcessor,
+    CGALOperator,
 )
 from .graph3d import Graph3D  # noqa: E402
 from .mesh import MeshManager, example_mesh  # noqa: E402
@@ -72,10 +75,13 @@ __all__ = [
     "CableFitter",
     "FitOptions",
     "CGALError",
+    "CGALConfig",
+    "CGALBuilder",
     "CGALBuildError",
     "CGALExecutableNotFoundError",
     "CGALCommandResult",
     "CGALMeshProcessor",
+    "CGALOperator",
     "BasisOptimizer",
     "BasisOptimizerOptions",
     "MorphologyGraph",

@@ -23,3 +23,11 @@ target_link_libraries(mesh_repair
     Eigen3::Eigen
 )
 target_compile_definitions(mesh_repair PRIVATE CGAL_EIGEN3_ENABLED)
+
+add_executable(mesh_skeletonize mesh_skeletonize.cpp)
+target_link_libraries(mesh_skeletonize
+    PRIVATE
+    CGAL::CGAL
+    Eigen3::Eigen
+)
+target_compile_definitions(mesh_skeletonize PRIVATE CGAL_EIGEN3_ENABLED)

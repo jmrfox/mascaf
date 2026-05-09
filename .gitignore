@@ -150,3 +150,6 @@ Thumbs.db
 
 # rubbish
 .rubbish/
+
+# C++
+cpp/build/
