@@ -1,0 +1,59 @@
+name: Publish Release Branch
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type 'yes' to confirm rebuilding the release branch from main"
+        required: true
+        default: "no"
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Validate manual trigger confirmation
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "yes" ]; then
+            echo "Confirmation not provided. Set the 'confirm' input to 'yes' to proceed."
+            exit 1
+          fi
+
+      - name: Remove research-only directories and files
+        run: |
+          rm -rf notebooks/
+          rm -rf data/
+          rm -rf scripts/
+          rm -rf viz/
+          rm -rf tests/
+          rm -f jupytext.toml
+          rm -rf .windsurf/
+          rm -rf .cursor/
+          rm -f .codiumignore
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Commit stripped tree
+        run: |
+          git add -A
+          git commit -m "release: rebuild from main (${{ github.sha }})" || echo "Nothing to commit"
+
+      - name: Force-push to release branch
+        run: |
+          git push origin HEAD:release --force
