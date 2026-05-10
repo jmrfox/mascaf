@@ -3,6 +3,7 @@
 [![GitHub release](https://img.shields.io/github/v/release/jmrfox/mascaf?label=version)](https://github.com/jmrfox/mascaf/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![CI](https://github.com/jmrfox/mascaf/actions/workflows/publish-release.yml/badge.svg)](https://github.com/jmrfox/mascaf/actions/workflows/publish-release.yml)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20102245.svg)](https://doi.org/10.5281/zenodo.20102245)
 
 **MASCAF** (Mesh and Skeleton Cable Fitting) is a Python package for fitting **cable-graph morphology** (such as an [SWC](http://www.neuronland.org/NLMorphologyConverter/MorphologyFormats/SWC/Spec.html) model) to a **closed triangle mesh** using a **3D curve skeleton** as geometric guidance.
 
