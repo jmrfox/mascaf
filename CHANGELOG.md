@@ -6,6 +6,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ---
 
+## [1.0.1] — 2026-05-10
+
+### Added
+
+- `demo/` directory with Jupyter notebooks and scripts demonstrating the full pipeline and CGAL integration.
+
+### Fixed
+
+- `CGALOperator._run_operation` no longer resolves relative input/output paths to absolute paths, so paths passed to `simplify` and `skeletonize` are forwarded to the subprocess unchanged.
+- `FitOptions.multi_tangent_reduction` default corrected to `"mean"`.
+- Test data paths updated to point at `mascaf/demo/` where demo polyline files are located.
+
+---
+
 ## [1.0.0] — 2026-05-09
 
 ### Added
