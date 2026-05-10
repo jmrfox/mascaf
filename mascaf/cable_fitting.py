@@ -55,7 +55,7 @@ class FitOptions:
     radius_strategy: str = "equivalent_area"
     section_probe_eps: float = 1e-4
     section_probe_tries: int = 3
-    multi_tangent_reduction: str = "median"
+    multi_tangent_reduction: str = "mean"
     basis_optimizer_options: Optional[BasisOptimizerOptions] = None
 
 

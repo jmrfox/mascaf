@@ -247,7 +247,17 @@ class Validation:
         dict
             Dictionary containing all validation results organized by category.
         """
-        for account_for_overlaps in [False, True]:
+        has_branch_vertices = any(
+            self.morphology.degree[n] > 2 for n in self.morphology.nodes()
+        )
+        if not has_branch_vertices:
+            logger.info(
+                "No branch vertices (degree > 2) found; overlap correction "
+                "has no effect. Showing account_for_overlaps=False only."
+            )
+
+        overlap_flags = [False, True] if has_branch_vertices else [False]
+        for account_for_overlaps in overlap_flags:
             vol_result = self.compare_volumes(account_for_overlaps=account_for_overlaps)
             area_result = self.compare_surface_areas(
                 account_for_overlaps=account_for_overlaps

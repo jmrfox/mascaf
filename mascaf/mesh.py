@@ -180,6 +180,22 @@ class MeshManager:
     def to_trimesh(self):
         return self.mesh
 
+    def bounding_box_diagonal(self) -> float:
+        """Return the length of the bounding box space diagonal.
+
+        Computed as the Euclidean distance between the minimum and maximum
+        corners of the axis-aligned bounding box of the mesh.  Useful as
+        a scale reference when choosing ``max_edge_length`` for
+        :class:`~mascaf.FitOptions`.
+
+        Returns
+        -------
+        float
+            Length of the bounding box diagonal.
+        """
+        bounds = self.mesh.bounds
+        return float(np.linalg.norm(bounds[1] - bounds[0]))
+
     # combining the functions from utils into this class
 
     def analyze_mesh(self) -> dict:

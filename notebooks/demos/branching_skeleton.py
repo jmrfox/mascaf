@@ -12,7 +12,7 @@ logging.basicConfig(level=logging.INFO)
 mm = MeshManager(mesh_path="../../data/demo/test_branching_3.obj")
 mm.print_mesh_analysis()
 raw_skeleton = SkeletonGraph.from_txt(f"../../data/demo/test_branching_3.polylines.txt")
-# raw_skeleton.prune_short_branches_inplace(min_length_percentile=1)
+# raw_skeleton.prune_short_branches_inplace(min_length_fraction=1)
 mm.visualize_mesh_3d(title="Branching test model", skel=raw_skeleton)
 
 # %%

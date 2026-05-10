@@ -20,8 +20,7 @@ from mascaf import (
 
 _DEMO = files("mascaf.demo")
 DEFAULT_MESH = Path(str(_DEMO / "torus.obj"))
-DEFAULT_FALLBACK_SKELETON = Path(str(_DEMO / "torus.polylines.txt"))
-DEFAULT_OUTPUT_DIR = Path.home() / ".mascaf" / "generated"
+DEFAULT_OUTPUT_DIR = Path("outputs")
 
 
 def parse_args() -> argparse.Namespace:
@@ -54,8 +53,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-edge-length",
         type=float,
-        default=0.5,
-        help=("CableFitter max edge length."),
+        default=None,
+        help=(
+            "CableFitter max edge length. Mutually exclusive with "
+            "--max-edge-length-fraction."
+        ),
+    )
+    parser.add_argument(
+        "--max-edge-length-fraction",
+        type=float,
+        default=None,
+        help=(
+            "Set max edge length as this fraction of the mesh bounding "
+            "box diagonal. Mutually exclusive with --max-edge-length."
+        ),
     )
     parser.add_argument(
         "--radius-strategy",
@@ -100,7 +111,35 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help=("Enable INFO-level logging."),
     )
+    parser.add_argument(
+        "--log-validation",
+        action="store_true",
+        help=(
+            "Write full_validation() output to validation.log in output-dir."
+        ),  # noqa: E501
+    )
     return parser.parse_args()
+
+
+def resolve_max_edge_length(
+    args: argparse.Namespace,
+    mesh_manager: MeshManager,
+) -> float:
+    both_set = (
+        args.max_edge_length is not None and args.max_edge_length_fraction is not None
+    )
+    if both_set:
+        raise ValueError(
+            "--max-edge-length and --max-edge-length-fraction are mutually "
+            "exclusive."
+        )
+    if args.max_edge_length_fraction is not None:
+        diagonal = mesh_manager.bounding_box_diagonal()
+        return args.max_edge_length_fraction * diagonal
+    if args.max_edge_length is not None:
+        return args.max_edge_length
+    diagonal = mesh_manager.bounding_box_diagonal()
+    return 0.1 * diagonal
 
 
 def build_fit_options(args: argparse.Namespace) -> FitOptions:
@@ -108,12 +147,12 @@ def build_fit_options(args: argparse.Namespace) -> FitOptions:
     if not args.disable_basis_optimization:
         basis_options = BasisOptimizerOptions(
             do_snapping=True,
-            do_forcing=True,
-            max_iterations=50,
-            smoothing_weight=0.5,
+            do_forcing=False,
+            max_iterations=10,
+            smoothing_weight=0.1,
         )
     return FitOptions(
-        max_edge_length=args.max_edge_length,
+        max_edge_length=args._resolved_max_edge_length,
         radius_strategy=args.radius_strategy,
         basis_optimizer_options=basis_options,
     )
@@ -153,12 +192,6 @@ def resolve_skeleton_path(
                 exc,
             )
 
-    if (
-        mesh_path.resolve() == DEFAULT_MESH.resolve()
-        and DEFAULT_FALLBACK_SKELETON.exists()
-    ):
-        return DEFAULT_FALLBACK_SKELETON, "bundled demo skeleton"
-
     raise RuntimeError(
         "No skeleton source is available. Provide --skeleton-path "
         "or build the internal CGAL executables."
@@ -186,6 +219,7 @@ def main() -> None:
     )
 
     mesh_manager = MeshManager(mesh_path=str(mesh_path))
+    args._resolved_max_edge_length = resolve_max_edge_length(args, mesh_manager)
     skeleton = SkeletonGraph.from_txt(str(skeleton_path))
     fit_options = build_fit_options(args)
     morphology = CableFitter(fit_options).fit(mesh_manager, skeleton)
@@ -200,6 +234,18 @@ def main() -> None:
     morphology.to_swc_file(str(swc_path))
 
     validator = Validation(mesh_manager, skeleton, morphology)
+
+    if args.log_validation:
+        log_path = output_dir / "validation.log"
+        mascaf_logger = logging.getLogger("mascaf")
+        file_handler = logging.FileHandler(log_path)
+        file_handler.setFormatter(logging.Formatter("%(message)s"))
+        mascaf_logger.addHandler(file_handler)
+        mascaf_logger.setLevel(logging.INFO)
+        validator.full_validation()
+        mascaf_logger.removeHandler(file_handler)
+        file_handler.close()
+
     volume_result = validator.compare_volumes()
     area_result = validator.compare_surface_areas()
 

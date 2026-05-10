@@ -40,10 +40,10 @@ def test_prune_short_branches_length_threshold(ts2_skeleton):
             assert length >= min_length or np.isclose(length, min_length, rtol=0.1)
 
 
-def test_prune_percentile_based(ts2_skeleton):
-    """Test percentile-based pruning."""
+def test_prune_fraction_based(ts2_skeleton):
+    """Test fraction-based pruning."""
     original_n = ts2_skeleton.number_of_nodes()
-    pruned = ts2_skeleton.prune_short_branches(min_length_percentile=20, verbose=False)
+    pruned = ts2_skeleton.prune_short_branches(min_length_fraction=0.1, verbose=False)
 
     assert isinstance(pruned, SkeletonGraph)
     assert pruned.number_of_nodes() <= original_n

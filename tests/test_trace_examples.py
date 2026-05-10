@@ -9,7 +9,7 @@ from mascaf import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DATA = ROOT / "data" / "demo"
+DATA = ROOT / "mascaf" / "demo"
 
 
 def test_cylinder_trace_non_empty():

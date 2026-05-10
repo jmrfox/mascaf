@@ -386,7 +386,7 @@ class SkeletonGraph(Graph3D):
     def prune_short_branches(
         self,
         min_length: Optional[float] = None,
-        min_length_percentile: Optional[float] = None,
+        min_length_fraction: Optional[float] = None,
         tolerance: float = 1e-6,
         iterative: bool = True,
         verbose: bool = False,
@@ -406,8 +406,8 @@ class SkeletonGraph(Graph3D):
         if self.number_of_nodes() == 0:
             return self.copy()
 
-        if min_length is None and min_length_percentile is None:
-            raise ValueError("Must specify either min_length or min_length_percentile")
+        if min_length is None and min_length_fraction is None:
+            raise ValueError("Must specify either min_length or min_length_fraction")
 
         # Determine threshold from the original graph
         original = self.copy()
@@ -420,7 +420,7 @@ class SkeletonGraph(Graph3D):
             threshold = float(min_length)
         else:
             threshold = float(
-                np.percentile(original_branch_lengths, min_length_percentile)
+                np.percentile(original_branch_lengths, min_length_fraction * 100.0)
             )
 
         if verbose:
@@ -478,7 +478,7 @@ class SkeletonGraph(Graph3D):
     def prune_short_branches_inplace(
         self,
         min_length: Optional[float] = None,
-        min_length_percentile: Optional[float] = None,
+        min_length_fraction: Optional[float] = None,
         tolerance: float = 1e-6,
         iterative: bool = True,
         verbose: bool = False,
@@ -491,7 +491,7 @@ class SkeletonGraph(Graph3D):
         before = self.number_of_nodes()
         pruned = self.prune_short_branches(
             min_length=min_length,
-            min_length_percentile=min_length_percentile,
+            min_length_fraction=min_length_fraction,
             tolerance=tolerance,
             iterative=True,
             verbose=verbose,

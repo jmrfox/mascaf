@@ -41,7 +41,7 @@ fit_options = FitOptions(
 
 mm = MeshManager(mesh_path=f"../data/demo/{name}.obj")
 raw_skeleton = SkeletonGraph.from_txt(f"../data/demo/{name}.polylines.txt")
-raw_skeleton.prune_short_branches_inplace(min_length_percentile=10)
+raw_skeleton.prune_short_branches_inplace(min_length_fraction=10)
 
 # mesh only
 fig = mm.visualize_mesh_3d(skel=None, show_axes=False, title="")

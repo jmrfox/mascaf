@@ -22,7 +22,7 @@ class BasisOptimizerOptions:
 
     do_pruning: bool = False
     pruning_min_length: Optional[float] = None
-    pruning_min_length_percentile: Optional[float] = None
+    pruning_min_length_fraction: Optional[float] = None
     pruning_iterative: bool = True
     do_snapping: bool = True
     do_forcing: bool = True
@@ -195,18 +195,18 @@ class BasisOptimizer:
         self.graph = current
 
     def _resolve_pruning_threshold(self) -> Optional[float]:
-        """Resolve the branch-pruning threshold from absolute or percentile input."""
+        """Resolve the branch-pruning threshold from absolute or fraction input."""
         if self.options.pruning_min_length is not None:
             return float(self.options.pruning_min_length)
 
-        percentile = self.options.pruning_min_length_percentile
-        if percentile is None:
+        fraction = self.options.pruning_min_length_fraction
+        if fraction is None:
             return None
 
         branch_lengths = list(self._compute_branch_lengths(self.graph).values())
         if not branch_lengths:
             return None
-        return float(np.percentile(branch_lengths, float(percentile)))
+        return float(np.percentile(branch_lengths, float(fraction * 100.0)))
 
     def _run_snapping_phase(self) -> None:
         """Snap outside basis nodes back into the mesh."""

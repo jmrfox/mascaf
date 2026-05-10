@@ -35,7 +35,7 @@ def get_ts_pipeline_params(idx: int) -> dict:
 
     optimizer_options = BasisOptimizerOptions(
             do_pruning=True,
-            pruning_min_length_percentile=pruning_fractions[idx],
+            pruning_min_length_fraction=pruning_fractions[idx],
             do_snapping=True,
             do_forcing=True,
             n_rays=6,

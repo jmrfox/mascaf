@@ -192,11 +192,6 @@ class TestMultiTangentRadius:
         # Test with single radius
         assert _reduce_multi_radii([2.5], "mean") == 2.5
 
-    def test_fit_options_default_multi_tangent(self):
-        """Test that FitOptions has correct default multi_tangent_reduction."""
-        opts = FitOptions()
-        assert opts.multi_tangent_reduction == "median"
-
     def test_skeleton_node_radii_computation(self, cylinder_mesh, y_shaped_skeleton):
         """Test the skeleton node radii computation function."""
         from mascaf.cable_fitting import _compute_skeleton_node_radii
