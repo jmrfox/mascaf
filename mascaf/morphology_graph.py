@@ -133,10 +133,15 @@ class MorphologyGraph(Graph3D):
         return graph
 
     def add_junction(self, j: Junction) -> None:
-        """Add a SWC-like junction as a node with attributes.
+        """Add a :class:`Junction` as a graph node.
 
-        Node key = `j.id`.
-        Stored attributes include `xyz` and `radius`.
+        The node key is ``j.id``; stored attributes are ``xyz`` and
+        ``radius``.
+
+        Parameters
+        ----------
+        j : Junction
+            The junction to add.
         """
         self.add_node(
             int(j.id),
@@ -145,7 +150,13 @@ class MorphologyGraph(Graph3D):
         )
 
     def copy(self) -> "MorphologyGraph":
-        """Create a copy of the morphology graph with copied node arrays."""
+        """Return a deep copy of the graph with all node arrays copied.
+
+        Returns
+        -------
+        MorphologyGraph
+            A new graph with the same topology and independent node data.
+        """
         new_graph = MorphologyGraph()
         new_graph.graph.update(dict(self.graph))
 
@@ -575,26 +586,35 @@ class MorphologyGraph(Graph3D):
     ) -> str:
         """Export the skeleton to SWC format, breaking cycles by duplicating nodes.
 
-        The SWC format is a line-based format with columns:
-            n T x y z R parent
-        where `n` is the node id (integer), `T` is the SWC type index (integer),
-        `x,y,z` are coordinates, `R` is radius, and `parent` is the parent's id
-        (or -1 for the root).
+        The SWC format is a line-based format with columns
+        ``n T x y z R parent``, where ``n`` is the node id, ``T`` is the SWC
+        type index, ``x,y,z`` are coordinates, ``R`` is radius, and ``parent``
+        is the parent's id (or -1 for the root).
 
-        This method constructs a spanning forest over the undirected skeleton
-        graph for parent-child relations. For every non-tree edge that would
-        introduce a cycle, it duplicates one endpoint node (copying xyz and
-        radius) and attaches the duplicate as a child of the other endpoint.
+        Constructs a spanning forest over the undirected graph; for every
+        non-tree edge that would introduce a cycle it duplicates one endpoint
+        and attaches the duplicate as a child of the other endpoint.
 
-        Args:
-            path: If provided, write the SWC text to this file. If None, return
-                the SWC text as a string.
-            tag: Integer put in the T column for all nodes.
-            annotate_breaks: If True, include header comments indicating how to
-                reconnect duplicates to recreate each broken cycle.
+        Parameters
+        ----------
+        path : str or None
+            If provided, write the SWC text to this file. If ``None``, return
+            the SWC text as a string.
+        tag : int, default 3
+            Integer placed in the SWC ``T`` (type) column for all nodes.
+        annotate_breaks : bool, default True
+            If ``True``, include header comment lines indicating how to
+            reconnect duplicates to restore each broken cycle.
 
-        Returns:
-            The SWC text if `path` is None; otherwise returns the written text.
+        Returns
+        -------
+        str
+            The SWC text (whether or not it was also written to a file).
+
+        Raises
+        ------
+        KeyError
+            If any node is missing the ``xyz`` or ``radius`` attribute.
         """
         # Collect original node ids and attributes
         if self.number_of_nodes() == 0:

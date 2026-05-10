@@ -60,9 +60,26 @@ class FitOptions:
 
 
 class CableFitter:
-    """Fit a cable-style MorphologyGraph from a mesh and SkeletonGraph."""
+    """Fit a cable-style :class:`~mascaf.morphology_graph.MorphologyGraph` from a mesh and skeleton.
 
-    def __init__(self, options: Optional[FitOptions] = None):
+    The fitter resamples each unbranching section of the skeleton so that no
+    segment exceeds :attr:`FitOptions.max_edge_length`, optionally optimizes
+    the intermediate basis with :class:`~mascaf.basis_optimizer.BasisOptimizer`,
+    then estimates local radii from mesh cross-sections.
+
+    Parameters
+    ----------
+    options : FitOptions or None
+        Fitting configuration. Defaults to :class:`FitOptions` with all
+        defaults when ``None``.
+
+    Examples
+    --------
+    >>> fitter = CableFitter(FitOptions(max_edge_length=1.0))
+    >>> morphology = fitter.fit(mesh_mgr, skeleton)
+    """
+
+    def __init__(self, options: Optional[FitOptions] = None) -> None:
         """Store fitter configuration, using defaults when none are provided."""
         self.options = options or FitOptions()
 
@@ -71,7 +88,28 @@ class CableFitter:
         mesh: Union[trimesh.Trimesh, MeshManager],
         skeleton: SkeletonGraph,
     ) -> MorphologyGraph:
-        """Build a MorphologyGraph from the input skeleton and mesh."""
+        """Build a :class:`~mascaf.morphology_graph.MorphologyGraph` from a mesh and skeleton.
+
+        Parameters
+        ----------
+        mesh : trimesh.Trimesh or MeshManager
+            The closed triangle mesh used to estimate local radii.
+        skeleton : SkeletonGraph
+            The curve skeleton that defines morphology topology and geometry.
+
+        Returns
+        -------
+        MorphologyGraph
+            Fitted morphology with node positions and radii. Returns an empty
+            graph if ``skeleton`` has no nodes.
+
+        Raises
+        ------
+        ValueError
+            If ``mesh`` is empty.
+        TypeError
+            If ``mesh`` or ``skeleton`` are not the expected types.
+        """
         mesh_obj = _resolve_mesh(mesh)
         if len(mesh_obj.vertices) == 0:
             raise ValueError("Mesh is empty or not provided")

@@ -42,7 +42,9 @@ def _to_polydata(mesh: MeshLike) -> pv.PolyData:
                 raise ValueError(f"No geometry in scene: {mesh}")
             loaded = geoms[0]
         if not isinstance(loaded, trimesh.Trimesh):
-            raise TypeError(f"Expected a single mesh file, got {type(loaded)} for {mesh}")
+            raise TypeError(
+                f"Expected a single mesh file, got {type(loaded)} for {mesh}"
+            )
         return pv.wrap(loaded).copy(deep=True)
     raise TypeError(f"Unsupported mesh type: {type(mesh)}")
 
@@ -90,7 +92,9 @@ def _pca_principal_frame(vertices_centered: np.ndarray) -> np.ndarray | None:
     **descending** singular value (row ``vh[0]`` = strongest spread). Returns
     ``None`` if the cloud is nearly spherical (no stable frame).
     """
-    pts = _subsample_points(np.asarray(vertices_centered, dtype=float), max_points=20_000)
+    pts = _subsample_points(
+        np.asarray(vertices_centered, dtype=float), max_points=20_000
+    )
     if len(pts) < 3:
         return None
     x = pts - pts.mean(axis=0)
@@ -190,7 +194,9 @@ def _prepare_meshes_for_grid(
             f"Need at least {len(meshes)} cells but grid_shape {grid_shape} has capacity {capacity}"
         )
 
-    vdir = np.asarray(_DEFAULT_ISO_VIEW_DIR if view_dir is None else view_dir, dtype=float)
+    vdir = np.asarray(
+        _DEFAULT_ISO_VIEW_DIR if view_dir is None else view_dir, dtype=float
+    )
     vdir = vdir / np.linalg.norm(vdir)
 
     prepared: list[pv.PolyData] = []
@@ -609,11 +615,37 @@ def save_surface_meshes_svg(
     background: str = "white",
     off_screen: bool = True,
 ) -> list[Path]:
-    """
-    Save one true-vector SVG file per mesh using the grid camera/framing style.
+    """Save one true-vector SVG file per mesh using the grid camera and framing style.
 
-    Parameters mirror :func:`plot_surface_mesh_grid` where applicable. Filenames are
-    either taken from ``file_stems`` or generated as ``{file_prefix}_{index:03d}.svg``.
+    Parameters
+    ----------
+    meshes : sequence of MeshLike
+        Meshes to render, one SVG file each.
+    out_dir : str or Path
+        Output directory (created if it does not exist).
+    file_stems : sequence of str or None
+        Filenames without ``.svg`` extension, one per mesh. If ``None``,
+        names are generated as ``{file_prefix}_{index:03d}.svg``.
+    file_prefix : str, default "mesh"
+        Prefix used for auto-generated filenames.
+    start_index : int, default 0
+        Starting index for auto-generated filenames.
+    **kwargs
+        Remaining keyword arguments (``center_each``, ``auto_rotate_each``,
+        ``view_dir``, ``parallel_scale_margin``, ``zoom``, ``mesh_color``,
+        ``colors``, ``window_size``, ``background``, ``off_screen``) are
+        passed through to :func:`plot_surface_mesh_grid` unchanged.
+
+    Returns
+    -------
+    list[pathlib.Path]
+        Paths to each written SVG file, in input order.
+
+    Raises
+    ------
+    ValueError
+        If ``file_stems`` length does not match ``len(meshes)`` or contains
+        an empty string.
     """
     if file_stems is not None and len(file_stems) != len(meshes):
         raise ValueError("file_stems must match len(meshes) when provided")
@@ -677,13 +709,38 @@ def save_surface_mesh_grid_svg(
     off_screen: bool = True,
 ) -> tuple[Path, list[Path]]:
     """
-    Save a mesh grid figure as a true-vector SVG, with optional per-mesh SVGs.
+    Save a mesh-grid figure as a true-vector SVG, with optional per-mesh SVGs.
+
+    Parameters
+    ----------
+    meshes : sequence of MeshLike
+        Meshes to render.
+    grid_shape : tuple[int, int]
+        ``(n_rows, n_cols)`` grid layout.
+    out_path : str or Path
+        Destination for the composite grid SVG.
+    save_individual_meshes : bool, default False
+        If ``True``, also save one SVG per mesh.
+    individual_out_dir : str or Path or None
+        Directory for individual SVGs. Defaults to the same directory as
+        *out_path* when ``None``.
+    individual_file_stems : sequence of str or None
+        Filenames (without ``.svg``) for each individual mesh.
+    individual_file_prefix : str, default "mesh"
+        Prefix used when *individual_file_stems* is ``None``.
+    individual_start_index : int, default 0
+        Starting index for auto-generated filenames.
+    **kwargs
+        Remaining keyword arguments (``center_each``, ``auto_rotate_each``,
+        ``view_dir``, ``parallel_scale_margin``, ``zoom``, ``mesh_color``,
+        ``colors``, ``window_size``, ``background``, ``off_screen``) are
+        passed through to :func:`plot_surface_mesh_grid` unchanged.
 
     Returns
     -------
     tuple[pathlib.Path, list[pathlib.Path]]
-        ``(grid_svg_path, individual_svg_paths)`` where the second list is empty
-        unless ``save_individual_meshes`` is True.
+        ``(grid_svg_path, individual_svg_paths)`` — the second list is
+        empty unless *save_individual_meshes* is ``True``.
     """
     prepared, vdir, parallel_for_camera = _prepare_meshes_for_grid(
         meshes,
@@ -708,7 +765,11 @@ def save_surface_mesh_grid_svg(
 
     individual: list[Path] = []
     if save_individual_meshes:
-        save_dir = Path(individual_out_dir) if individual_out_dir is not None else grid_svg.parent
+        save_dir = (
+            Path(individual_out_dir)
+            if individual_out_dir is not None
+            else grid_svg.parent
+        )
         individual = save_surface_meshes_svg(
             meshes,
             out_dir=save_dir,
@@ -728,4 +789,3 @@ def save_surface_mesh_grid_svg(
         )
 
     return grid_svg, individual
-

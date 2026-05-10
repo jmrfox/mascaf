@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ---
 
+## [1.0.2] — 2026-05-10
+
+### Added
+
+- Sphinx documentation site with API reference and user guide (`docs/`).
+- Read the Docs configuration (`.readthedocs.yaml`).
+- NumPy-style docstrings across all public modules: `mesh`, `cable_fitting`, `basis_optimizer`, `cgal`, `morphology_graph`, `skeleton`, `validation`, `visualization`.
+- `docs` dependency group in `pyproject.toml` (`sphinx`, `furo`, `myst-parser`, `sphinx-autodoc-typehints`).
+- Read the Docs badge in `README.md`.
+
+---
+
 ## [1.0.1] — 2026-05-10
 
 ### Added

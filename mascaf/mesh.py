@@ -95,7 +95,28 @@ def example_mesh(
 
 class MeshManager:
     """
-    Unified mesh class handling loading, processing, and analysis.
+    Unified mesh class handling loading, processing, and analysis of triangle meshes.
+
+    Wraps a :class:`trimesh.Trimesh` with convenience methods for loading,
+    saving, copying, and analyzing mesh geometry. Loading can be deferred
+    by passing a ``mesh_path`` to the constructor or by calling
+    :meth:`load_mesh` directly.
+
+    Parameters
+    ----------
+    mesh : trimesh.Trimesh or None
+        An already-loaded mesh to wrap. Either this or ``mesh_path`` must be
+        provided.
+    mesh_path : str or None
+        Path to a mesh file. If provided, :meth:`load_mesh` is called
+        immediately during construction.
+    verbose : bool, default True
+        If True, log informational messages when loading.
+
+    Examples
+    --------
+    >>> mgr = MeshManager(mesh_path="neuron.obj")
+    >>> mgr.bounding_box_diagonal()
     """
 
     def __init__(
@@ -129,15 +150,25 @@ class MeshManager:
     def load_mesh(
         self, filepath: str, file_format: Optional[str] = None
     ) -> trimesh.Trimesh:
-        """
-        Load a mesh from file.
+        """Load a mesh from file and store it as :attr:`mesh`.
 
-        Args:
-            filepath: Path to mesh file
-            file_format: Optional format specification (auto-detected if None)
+        Parameters
+        ----------
+        filepath : str
+            Path to the mesh file.
+        file_format : str or None
+            Format hint (e.g. ``"obj"``). Auto-detected from the file extension
+            when ``None``.
 
-        Returns:
-            Loaded trimesh object
+        Returns
+        -------
+        trimesh.Trimesh
+            The loaded mesh (also stored as ``self.mesh``).
+
+        Raises
+        ------
+        ValueError
+            If the file cannot be loaded or does not contain a single mesh.
         """
         try:
             if file_format:
@@ -171,13 +202,24 @@ class MeshManager:
         except Exception as e:
             raise ValueError(f"Failed to load mesh from {filepath}: {str(e)}")
 
-    def save(self, filepath, file_format="obj"):
+    def save(self, filepath: str, file_format: str = "obj") -> None:
+        """Export the mesh to a file.
+
+        Parameters
+        ----------
+        filepath : str
+            Destination file path.
+        file_format : str, default "obj"
+            Format string understood by ``trimesh.Trimesh.export``.
+        """
         self.mesh.export(filepath, file_type=file_format)
 
-    def copy(self):
+    def copy(self) -> "MeshManager":
+        """Return a new :class:`MeshManager` wrapping a deep copy of the mesh."""
         return MeshManager(self.mesh.copy())
 
-    def to_trimesh(self):
+    def to_trimesh(self) -> trimesh.Trimesh:
+        """Return the underlying :class:`trimesh.Trimesh` object."""
         return self.mesh
 
     def bounding_box_diagonal(self) -> float:
@@ -199,13 +241,15 @@ class MeshManager:
     # combining the functions from utils into this class
 
     def analyze_mesh(self) -> dict:
-        """
-        Analyze and return mesh properties for diagnostic purposes.
-        This function performs pure analysis without modifying the input mesh.
+        """Analyze mesh properties for diagnostic purposes without modifying the mesh.
 
-        Returns:
-            Dictionary of mesh properties including volume, watertightness, winding consistency,
-            face count, vertex count, bounds, and potential issues.
+        Returns
+        -------
+        dict
+            Dictionary with keys: ``face_count``, ``vertex_count``, ``bounds``,
+            ``is_watertight``, ``is_winding_consistent``, ``volume``,
+            ``is_manifold``, ``euler_characteristic``, ``genus``,
+            ``normal_stats``, and ``issues`` (list of warning strings).
         """
 
         mesh = self.to_trimesh()

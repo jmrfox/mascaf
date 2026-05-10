@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mascaf"
-version = "1.0.1"
+version = "1.0.2"
 description = "Mesh and Skeleton Cable Fitting"
 license = {text = "MIT"}
 readme = "README.md"
@@ -43,4 +43,10 @@ apidump = { git = "https://github.com/jmrfox/apidump.git" }
 dev = [
     "apidump",
     "jupytext>=1.19.1",
+]
+docs = [
+    "sphinx>=8",
+    "furo",
+    "myst-parser",
+    "sphinx-autodoc-typehints",
 ]

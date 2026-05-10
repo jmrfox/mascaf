@@ -154,7 +154,7 @@ class Validation:
             - 'mesh_volume': float, volume of the mesh
             - 'morphology_volume': float, volume of the morphology model
             - 'ratio': float, morphology_volume / mesh_volume
-            - 'absolute_difference': float, |morphology_volume - mesh_volume|
+            - 'absolute_difference': float, abs(morphology_volume - mesh_volume)
             - 'relative_error': float, abs difference / mesh_volume
 
         Examples
@@ -239,13 +239,17 @@ class Validation:
             "relative_error": rel_error,
         }
 
-    def full_validation(self):
-        """
-        Run all validation checks and return comprehensive results.
+    def full_validation(self) -> None:
+        """Run all validation checks and log comprehensive results.
+
+        Compares volumes and surface areas (with and without branch-point
+        overlap correction when branch vertices are present) and logs
+        each result via the module logger at ``INFO`` level.
+
         Returns
         -------
-        dict
-            Dictionary containing all validation results organized by category.
+        None
+            Results are emitted via logging rather than returned.
         """
         has_branch_vertices = any(
             self.morphology.degree[n] > 2 for n in self.morphology.nodes()

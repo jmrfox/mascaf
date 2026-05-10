@@ -1,3 +1,27 @@
+"""
+Optional CGAL-backed native preprocessing for MASCAF.
+
+Provides Python wrappers around three compiled C++ executables:
+
+* ``mesh_repair`` — attempt to produce a watertight mesh.
+* ``mesh_simplify`` — reduce mesh face count.
+* ``mesh_skeletonize`` — extract a mean-curvature skeleton as a polylines file.
+
+The executables are built separately from the ``cpp/`` directory using CMake
+and vcpkg. See :doc:`/guide/skeletonization` for setup instructions.
+
+Classes
+-------
+CGALConfig
+    Locate executables and configure CMake.
+CGALBuilder
+    Run CMake configure/build and discover executables.
+CGALOperator
+    High-level Python methods for each CGAL operation.
+CGALCommandResult
+    Immutable record of a completed CGAL subprocess invocation.
+"""
+
 from __future__ import annotations
 
 import logging

@@ -18,7 +18,11 @@ logger.addHandler(logging.NullHandler())
 
 @dataclass
 class BasisOptimizerOptions:
-    """Configuration for morphology-basis optimization."""
+    """Configuration for morphology-basis optimization.
+
+    All fields are keyword arguments to the dataclass constructor; see
+    each field's inline annotation for defaults and semantics.
+    """
 
     do_pruning: bool = False
     pruning_min_length: Optional[float] = None
@@ -39,7 +43,32 @@ class BasisOptimizerOptions:
 
 
 class BasisOptimizer:
-    """Optimize a downsampled MorphologyGraph basis against a target mesh."""
+    """Optimize a downsampled :class:`~mascaf.morphology_graph.MorphologyGraph` basis against a target mesh.
+
+    Runs up to three sequential phases controlled by
+    :class:`BasisOptimizerOptions`:
+
+    1. **Pruning** — remove short terminal branches.
+    2. **Snapping** — move outside nodes back inside the mesh.
+    3. **Forcing** — iteratively pull nodes toward the medial axis.
+
+    Parameters
+    ----------
+    graph : MorphologyGraph
+        The morphology basis to optimize. A deep copy is made internally so
+        the original is not modified.
+    mesh : trimesh.Trimesh
+        The target mesh that defines the interior/exterior and surface.
+    options : BasisOptimizerOptions or None
+        Optimization configuration. Defaults to :class:`BasisOptimizerOptions`
+        with all defaults when ``None``.
+
+    Examples
+    --------
+    >>> from mascaf import BasisOptimizer, BasisOptimizerOptions
+    >>> opts = BasisOptimizerOptions(do_snapping=True, do_forcing=True)
+    >>> optimized = BasisOptimizer(morphology, mesh, opts).optimize()
+    """
 
     def __init__(
         self,
@@ -64,7 +93,19 @@ class BasisOptimizer:
         )
 
     def get_outside_nodes(self) -> Tuple[list[int], bool, int, float]:
-        """Identify graph nodes that lie outside the mesh surface."""
+        """Identify graph nodes that lie outside the mesh surface.
+
+        Returns
+        -------
+        tuple
+            ``(outside_node_ids, has_crossing, num_outside, max_dist)`` where:
+
+            * **outside_node_ids** — list of node IDs outside the mesh.
+            * **has_crossing** — ``True`` if any node is outside.
+            * **num_outside** — count of outside nodes.
+            * **max_dist** — maximum distance from any outside node to the
+              nearest mesh surface point.
+        """
         if self.graph.number_of_nodes() == 0:
             self._outside_nodes = []
             self._surface_crossing_detected = False
@@ -113,7 +154,16 @@ class BasisOptimizer:
             return [], False, 0, 0.0
 
     def optimize(self) -> MorphologyGraph:
-        """Optimize the morphology basis via pruning, snapping, and forcing."""
+        """Run the configured optimization phases and return the result.
+
+        Runs pruning, snapping, and forcing in sequence (each phase is
+        skipped when its corresponding ``do_*`` flag is ``False``).
+
+        Returns
+        -------
+        MorphologyGraph
+            The optimized morphology basis (a modified copy of the input).
+        """
         logger.info("Starting basis optimization...")
         logger.info("  Nodes: %d", self.graph.number_of_nodes())
 

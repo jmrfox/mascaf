@@ -47,12 +47,16 @@ class SkeletonGraph(Graph3D):
     """
 
     def __init__(self, tolerance: float = 1e-6, **attr):
-        """
-        Initialize a SkeletonGraph.
+        """Initialize a SkeletonGraph.
 
-        Args:
-            tolerance: Distance threshold for merging nearby endpoints
-            **attr: Additional graph attributes
+        Parameters
+        ----------
+        tolerance : float, default 1e-6
+            Distance threshold below which two endpoints are merged into
+            a single node.
+        **attr
+            Additional keyword arguments forwarded to the networkx graph
+            constructor as graph-level attributes.
         """
         super().__init__(**attr)
         self.graph["tolerance"] = tolerance
@@ -66,19 +70,26 @@ class SkeletonGraph(Graph3D):
         polylines: Sequence[np.ndarray],
         tolerance: float = 1e-6,
     ) -> "SkeletonGraph":
-        """
-        Create a SkeletonGraph from a list of polyline arrays.
+        """Create a :class:`SkeletonGraph` from a sequence of polyline arrays.
 
-        Every point in the polylines becomes a node in the graph.
-        Consecutive points are connected by edges.
-        Endpoints within tolerance are merged into a single node.
+        Every point in every polyline becomes a node. Consecutive points
+        within a polyline are connected by edges. Endpoints whose Euclidean
+        distance is less than *tolerance* are merged into a single node.
 
-        Args:
-            polylines: List of (N_i, 3) arrays representing polylines
-            tolerance: Distance threshold for merging nearby endpoints
+        Parameters
+        ----------
+        polylines : sequence of numpy.ndarray, shape (N_i, 3)
+            Each element is an ordered array of 3D points representing one
+            branch of the skeleton.
+        tolerance : float, default 1e-6
+            Maximum distance between two endpoint coordinates for them to
+            be merged.
 
-        Returns:
-            SkeletonGraph instance
+        Returns
+        -------
+        SkeletonGraph
+            Graph with node positions stored under the ``'pos'`` attribute
+            and edge ``'length'`` attributes populated.
         """
         graph = cls(tolerance=tolerance)
 
