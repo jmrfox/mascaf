@@ -1,0 +1,36 @@
+# Normalize line endings to LF on commit
+* text=auto eol=lf
+
+# Windows batch/cmd files must use CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Explicitly text files
+*.py text diff=python
+*.md text diff=markdown
+*.rst text
+*.toml text
+*.yaml text
+*.yml text
+*.json text
+*.txt text
+*.cfg text
+*.ini text
+*.html text
+*.css text
+*.js text
+
+# Jupyter notebooks — treat as text, use nbdiff if available
+*.ipynb text
+
+# Binary files — no line-ending conversion
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.svg binary
+*.pdf binary
+*.obj binary
+*.stl binary
+*.ply binary

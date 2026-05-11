@@ -222,14 +222,15 @@ class MorphologyGraph(Graph3D):
         The volume of a frustum is: V = (π*h/3) * (r1² + r1*r2 + r2²)
         where h is the length and r1, r2 are the radii at the endpoints.
 
-        For nodes with degree > 2 (branch points), overlap correction is applied
-        by subtracting one ball volume per edge beyond 2.
+        For nodes with degree > 2 (branch points), overlap correction is
+        applied by subtracting half a ball volume per edge beyond 2.
 
         Parameters
         ----------
         account_for_overlaps : bool, default False
             If True, subtract branch-point overlap corrections from the naive
-            frustum sum (one correction per edge beyond two at each junction).
+            frustum sum (half a ball volume per edge beyond two at each
+            junction).
 
         Returns
         -------
@@ -255,13 +256,13 @@ class MorphologyGraph(Graph3D):
 
         End caps are added for terminal nodes (degree 1).
         For nodes with degree > 2 (branch points), overlap correction is applied
-        by subtracting one ball surface area per edge beyond 2.
+        by subtracting quarter of a ball surface area per edge beyond 2.
 
         Parameters
         ----------
         account_for_overlaps : bool, default False
             If True, subtract branch-point overlap corrections from the naive
-            sum (one correction per edge beyond two at each junction).
+            sum (quarter of a ball surface area per edge beyond two at each junction).
 
         Returns
         -------
@@ -301,7 +302,7 @@ class MorphologyGraph(Graph3D):
                 if degree > 2 and account_for_overlaps:
                     r = self.nodes[node_id]["radius"] * k
                     num_overlaps = degree - 2
-                    overlap_volume = np.pi * r**3
+                    overlap_volume = np.pi * r**3 / 3.0
                     total_volume -= num_overlaps * overlap_volume
             return float(total_volume)
 
@@ -327,7 +328,7 @@ class MorphologyGraph(Graph3D):
                 total_area += np.pi * r**2
             elif degree > 2 and account_for_overlaps:
                 num_overlaps = degree - 2
-                overlap_area = 2.0 * np.pi * r**2
+                overlap_area = np.pi * r**2
                 total_area -= num_overlaps * overlap_area
 
         return float(total_area)

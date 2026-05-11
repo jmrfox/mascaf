@@ -5,13 +5,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-# -- Project information -------------------------------------------------------
+# -- Project information ----------------------------------------------------
 project = "MASCAF"
 author = "jmrfox"
 copyright = "2024, jmrfox"
-release = "1.0.1"
+release = "1.0.2"
 
-# -- General configuration -----------------------------------------------------
+# -- General configuration ----------------------------------------------------
 extensions = [
     "sphinx.ext.autodoc",
     "sphinx.ext.napoleon",
@@ -24,7 +24,7 @@ extensions = [
 templates_path = ["_templates"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
-# -- Options for autodoc -------------------------------------------------------
+# -- Options for autodoc ----------------------------------------------------
 autodoc_default_options = {
     "members": True,
     "undoc-members": False,
@@ -34,14 +34,14 @@ autodoc_default_options = {
 autodoc_member_order = "bysource"
 autodoc_typehints = "description"
 
-# -- Options for Napoleon ------------------------------------------------------
+# -- Options for Napoleon -----------------------------------------------------
 napoleon_numpy_docstring = True
 napoleon_google_docstring = False
 napoleon_use_param = True
 napoleon_use_rtype = True
 napoleon_preprocess_types = True
 
-# -- Options for intersphinx ---------------------------------------------------
+# -- Options for intersphinx --------------------------------------------------
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),
     "numpy": ("https://numpy.org/doc/stable", None),
@@ -50,12 +50,12 @@ intersphinx_mapping = {
     "scipy": ("https://docs.scipy.org/doc/scipy", None),
 }
 
-# -- Options for HTML output ---------------------------------------------------
+# -- HTML output options ------------------------------------------------------
 html_theme = "furo"
 html_static_path = ["_static"]
 html_title = "MASCAF"
 
-# -- MyST parser ---------------------------------------------------------------
+# -- MyST parser --------------------------------------------------------------
 myst_enable_extensions = ["colon_fence"]
 source_suffix = {
     ".rst": "restructuredtext",

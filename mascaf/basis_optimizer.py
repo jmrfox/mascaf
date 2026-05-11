@@ -256,6 +256,8 @@ class BasisOptimizer:
         branch_lengths = list(self._compute_branch_lengths(self.graph).values())
         if not branch_lengths:
             return None
+        if fraction <= 0 or fraction >= 1:
+            raise ValueError(f"Pruning fraction must be in (0,1), got {fraction}")
         return float(np.percentile(branch_lengths, float(fraction * 100.0)))
 
     def _run_snapping_phase(self) -> None:

@@ -614,6 +614,7 @@ class MeshManager:
         width: int = 800,
         height: int = 600,
         *,
+        eye_scale: float = 1.25,
         skel: Optional[Union["SkeletonGraph", List["SkeletonGraph"]]] = None,
         skel_color: Union[str, List[str]] = "crimson",
         skel_line_width: float = 3.0,
@@ -658,6 +659,7 @@ class MeshManager:
                 show_wireframe,
                 width,
                 height,
+                eye_scale=eye_scale,
                 skel=skel,
                 skel_color=skel_color,
                 skel_line_width=skel_line_width,
@@ -685,6 +687,7 @@ class MeshManager:
         width=800,
         height=600,
         *,
+        eye_scale: float = 1.25,
         skel: Optional[Union["SkeletonGraph", List["SkeletonGraph"]]] = None,
         skel_color: Union[str, List[str]] = "crimson",
         skel_line_width: float = 3.0,
@@ -790,13 +793,16 @@ class MeshManager:
                         )
 
             # Configure layout
+            _e = float(eye_scale)
             fig.update_layout(
                 title=title,
                 autosize=False,
                 width=width,
                 height=height,
+                margin=dict(l=0, r=0, t=40, b=0),
                 scene=dict(
                     aspectmode="data",
+                    camera=dict(eye=dict(x=_e, y=_e, z=_e)),
                     xaxis=dict(visible=show_axes),
                     yaxis=dict(visible=show_axes),
                     zaxis=dict(visible=show_axes),
