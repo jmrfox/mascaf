@@ -5,10 +5,13 @@
 [![CI](https://github.com/jmrfox/mascaf/actions/workflows/publish-release.yml/badge.svg)](https://github.com/jmrfox/mascaf/actions/workflows/publish-release.yml)
 [![Documentation](https://readthedocs.org/projects/mascaf/badge/?version=latest)](https://mascaf.readthedocs.io/en/latest/)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20102245.svg)](https://doi.org/10.5281/zenodo.20102245)
+[![bioRxiv](https://img.shields.io/badge/bioRxiv-2025.10.16.683802-b31b1b.svg)](https://www.biorxiv.org/content/10.64898/2026.05.10.721501v1)
 
 **MASCAF** (Mesh and Skeleton Cable Fitting) is a Python package for fitting **cable-graph morphology** (such as an [SWC](http://www.neuronland.org/NLMorphologyConverter/MorphologyFormats/SWC/Spec.html) model) to a **closed triangle mesh** using a **3D curve skeleton** as geometric guidance.
 
 This workflow was developed to create neuronal morphology models for multi-compartmental simulation from 3D surface meshes. MASCAF is especially useful for complex morphologies, including non-tree structures, where the output must preserve graph topology before eventual SWC export.
+
+## [_Click here to read the preprint!_](https://www.biorxiv.org/content/10.64898/2026.05.10.721501v1)
 
 ## What you need
 
