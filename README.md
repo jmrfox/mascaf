@@ -267,7 +267,7 @@ fit_options = FitOptions(
         do_snapping=True,
         do_forcing=True,
         max_iterations=50,
-        smoothing_weight=0.5,
+        lambda_smooth=0.5,
     ),
 )
 

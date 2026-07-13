@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import networkx as nx
 import numpy as np
@@ -9,7 +10,11 @@ import matplotlib.pyplot as plt
 from scipy.optimize import brentq
 
 from .graph3d import Graph3D
+from .skeleton import SkeletonGraph
 from swctools import SWCModel, FrustaSet, plot_model
+
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
 
 
 @dataclass
@@ -131,6 +136,157 @@ class MorphologyGraph(Graph3D):
                 graph.remove_node(dup_id)
 
         return graph
+
+    @classmethod
+    def from_skeleton_graph(cls, skeleton: SkeletonGraph) -> "MorphologyGraph":
+        """Copy a skeleton graph into a morphology graph without resampling.
+
+        Preserves skeleton node IDs and topology. Node positions are stored as
+        ``xyz``; radii are not set.
+
+        Parameters
+        ----------
+        skeleton : SkeletonGraph
+            Input skeleton topology and geometry.
+
+        Returns
+        -------
+        MorphologyGraph
+            Exact copy of the skeleton as a morphology graph.
+
+        Examples
+        --------
+        >>> morph = MorphologyGraph.from_skeleton_graph(skeleton)
+        """
+        graph = cls()
+        for node in skeleton.nodes():
+            graph.add_node(
+                int(node),
+                xyz=np.asarray(skeleton.get_node_position(node), dtype=float),
+            )
+        for u, v in skeleton.edges():
+            graph.add_edge(int(u), int(v))
+        return graph
+
+    def resample(self, max_edge_length: float) -> "MorphologyGraph":
+        """Return a new morphology graph with edges resampled to a length bound.
+
+        Splits this graph into maximal unbranching paths and cycles, keeps
+        branch/terminal endpoints fixed, and resamples each section so that no
+        consecutive sample exceeds ``max_edge_length``. Does not modify ``self``.
+
+        Parameters
+        ----------
+        max_edge_length : float
+            Maximum allowed edge length along resampled unbranching sections.
+
+        Returns
+        -------
+        MorphologyGraph
+            Resampled morphology basis (nodes store ``xyz``; radii are not set).
+        """
+        graph = self.__class__()
+        node_map: Dict[Tuple[str, int], int] = {}
+        next_id = 0
+
+        def alloc_id() -> int:
+            """Allocate the next morphology node identifier."""
+            nonlocal next_id
+            nid = next_id
+            next_id += 1
+            return nid
+
+        def ensure_fixed_node(src_node: int) -> int:
+            """Create or return the shared morphology node for a fixed endpoint."""
+            key = ("fixed", int(src_node))
+            if key not in node_map:
+                nid = alloc_id()
+                # Junctions and terminals are carried over exactly so topology is
+                # inherited directly from the source graph.
+                graph.add_node(nid, xyz=self.get_node_position(src_node))
+                node_map[key] = nid
+            return node_map[key]
+
+        sections = _extract_unbranching_sections(self)
+        logger.debug(
+            "Resampling morphology graph from %d unbranching sections",
+            len(sections),
+        )
+        for section in sections:
+            section_nodes = section["nodes"]
+            # Each section is handled independently: keep endpoints fixed, then
+            # resample only the interior to satisfy the edge length bound.
+            polyline = np.array(
+                [self.get_node_position(node) for node in section_nodes],
+                dtype=float,
+            )
+            samples = _resample_polyline(polyline, max_edge_length)
+            if samples.shape[0] == 0:
+                logger.debug("Skipping empty resampled section: %s", section)
+                continue
+
+            if section["kind"] == "cycle":
+                anchor = ensure_fixed_node(section_nodes[0])
+                sequence = [anchor]
+                interior = samples[1:-1] if samples.shape[0] >= 2 else np.zeros((0, 3))
+                for point in interior:
+                    nid = alloc_id()
+                    graph.add_node(nid, xyz=np.asarray(point, dtype=float))
+                    sequence.append(nid)
+                sequence.append(anchor)
+            else:
+                start = ensure_fixed_node(section_nodes[0])
+                end = ensure_fixed_node(section_nodes[-1])
+                sequence = [start]
+                interior = samples[1:-1] if samples.shape[0] >= 2 else np.zeros((0, 3))
+                for point in interior:
+                    nid = alloc_id()
+                    graph.add_node(nid, xyz=np.asarray(point, dtype=float))
+                    sequence.append(nid)
+                if start != end or len(sequence) == 1:
+                    sequence.append(end)
+
+            logger.debug(
+                "Section kind=%s source_nodes=%d resampled_points=%d graph_nodes=%d",
+                section["kind"],
+                len(section_nodes),
+                samples.shape[0],
+                len(sequence),
+            )
+
+            for u, v in zip(sequence[:-1], sequence[1:]):
+                if u != v:
+                    graph.add_edge(u, v)
+
+        return graph
+
+    @classmethod
+    def from_skeleton_graph_resample(
+        cls,
+        skeleton: SkeletonGraph,
+        max_edge_length: float,
+    ) -> "MorphologyGraph":
+        """Copy a skeleton then resample edges to satisfy ``max_edge_length``.
+
+        Equivalent to ``cls.from_skeleton_graph(skeleton).resample(max_edge_length)``.
+
+        Parameters
+        ----------
+        skeleton : SkeletonGraph
+            Input skeleton topology and geometry.
+        max_edge_length : float
+            Maximum allowed edge length along resampled unbranching sections.
+
+        Returns
+        -------
+        MorphologyGraph
+            Resampled morphology basis (nodes store ``xyz``; radii are not set).
+
+        Examples
+        --------
+        >>> morph = MorphologyGraph.from_skeleton_graph_resample(skeleton, 2.0)
+        """
+        return cls.from_skeleton_graph(skeleton).resample(max_edge_length)
 
     def add_junction(self, j: Junction) -> None:
         """Add a :class:`Junction` as a graph node.
@@ -511,6 +667,55 @@ class MorphologyGraph(Graph3D):
 
         return scale_factor
 
+    def get_outside_nodes(self, mesh) -> list[int]:
+        """Return node IDs whose positions lie outside the mesh volume.
+
+        Parameters
+        ----------
+        mesh : trimesh.Trimesh or MeshManager
+            Target mesh used for containment tests.
+
+        Returns
+        -------
+        list of int
+            IDs of nodes outside the mesh. Empty if the graph has no nodes or
+            containment cannot be evaluated.
+        """
+        if self.number_of_nodes() == 0:
+            logger.debug("Outside-node query on empty morphology graph")
+            return []
+
+        try:
+            from .mesh import MeshManager
+        except ImportError:
+            MeshManager = None
+
+        if MeshManager is not None and isinstance(mesh, MeshManager):
+            mesh_obj = mesh.mesh
+        else:
+            mesh_obj = mesh
+
+        node_ids = list(self.nodes())
+        all_pts = self.get_all_positions()
+        logger.debug(
+            "Checking %d morphology nodes against mesh containment",
+            len(node_ids),
+        )
+
+        try:
+            inside_mask = mesh_obj.contains(all_pts)
+            outside_node_ids = [
+                node_ids[i] for i, is_out in enumerate(~inside_mask) if is_out
+            ]
+            logger.debug(
+                "Outside-node detection complete: outside_nodes=%s",
+                outside_node_ids,
+            )
+            return outside_node_ids
+        except Exception as exc:
+            logger.error("Failed to identify outside morphology nodes: %s", exc)
+            return []
+
     def print_attributes(
         self, *, node_info: bool = False, edge_info: bool = False
     ) -> None:
@@ -744,6 +949,131 @@ class MorphologyGraph(Graph3D):
         with open(path, "w", encoding="utf-8") as f:
             f.write(swc_text)
         return swc_text
+
+
+def _extract_unbranching_sections(graph: Graph3D) -> List[dict]:
+    """Split a graph into maximal non-branching paths and cycles."""
+    if graph.number_of_edges() == 0:
+        return []
+
+    # Nodes with degree != 2 mark section boundaries. Everything between them is
+    # an unbranching cable segment.
+    critical = {node for node in graph.nodes() if graph.degree(node) != 2}
+    visited_edges: set[frozenset[int]] = set()
+    sections: List[dict] = []
+
+    for start in sorted(critical):
+        for neighbor in sorted(graph.neighbors(start)):
+            edge_key = frozenset((start, neighbor))
+            if edge_key in visited_edges:
+                continue
+            path = [start]
+            prev = start
+            current = neighbor
+            visited_edges.add(edge_key)
+            path.append(current)
+
+            while current not in critical:
+                nbrs = [n for n in graph.neighbors(current) if n != prev]
+                if not nbrs:
+                    break
+                nxt = nbrs[0]
+                edge_key = frozenset((current, nxt))
+                if edge_key in visited_edges:
+                    break
+                visited_edges.add(edge_key)
+                prev, current = current, nxt
+                path.append(current)
+
+            sections.append({"kind": "path", "nodes": path})
+            logger.debug("Extracted path section with %d nodes", len(path))
+
+    for u, v in graph.edges():
+        edge_key = frozenset((u, v))
+        if edge_key in visited_edges:
+            continue
+        cycle_nodes = _trace_cycle_section(graph, u, v, visited_edges)
+        if len(cycle_nodes) >= 2:
+            sections.append({"kind": "cycle", "nodes": cycle_nodes})
+            logger.debug(
+                "Extracted cycle section with %d nodes",
+                len(cycle_nodes),
+            )
+
+    logger.debug(
+        "Extracted %d sections from graph (%d critical nodes)",
+        len(sections),
+        len(critical),
+    )
+
+    return sections
+
+
+def _trace_cycle_section(
+    graph: Graph3D,
+    start: int,
+    neighbor: int,
+    visited_edges: set[frozenset[int]],
+) -> List[int]:
+    """Follow one unvisited degree-2 loop and return its cyclic node sequence."""
+    path = [start, neighbor]
+    visited_edges.add(frozenset((start, neighbor)))
+    prev = start
+    current = neighbor
+
+    while True:
+        nbrs = [n for n in graph.neighbors(current) if n != prev]
+        if not nbrs:
+            break
+        nxt = nbrs[0]
+        edge_key = frozenset((current, nxt))
+        if nxt == start:
+            visited_edges.add(edge_key)
+            path.append(start)
+            break
+        if edge_key in visited_edges:
+            break
+        visited_edges.add(edge_key)
+        path.append(nxt)
+        prev, current = current, nxt
+
+    return path
+
+
+def _resample_polyline(pl: np.ndarray, max_edge_length: float) -> np.ndarray:
+    """Resample a polyline so that adjacent output samples obey the length bound."""
+    P = np.asarray(pl, dtype=float)
+    if P.ndim != 2 or P.shape[1] != 3 or P.shape[0] == 0:
+        return np.zeros((0, 3), dtype=float)
+    if P.shape[0] == 1:
+        return P.copy()
+
+    seg = np.linalg.norm(P[1:] - P[:-1], axis=1)
+    L = np.concatenate([[0.0], np.cumsum(seg)])
+    total = float(L[-1])
+    if total <= 0.0:
+        return P[[0], :].copy()
+
+    n_segments = max(1, int(np.ceil(total / max_edge_length)))
+    targets = np.linspace(0.0, total, n_segments + 1)
+
+    out: List[np.ndarray] = []
+    si = 0
+    for t in targets:
+        while si < len(seg) and L[si + 1] < t:
+            si += 1
+        if si >= len(seg):
+            out.append(P[-1])
+            continue
+        t0 = L[si]
+        t1 = L[si + 1]
+        if t1 <= t0:
+            out.append(P[si])
+            continue
+        alpha = (t - t0) / (t1 - t0)
+        out.append((1.0 - alpha) * P[si] + alpha * P[si + 1])
+
+    return np.vstack(out) if out else P[[0], :].copy()
 
 
 __all__ = ["MorphologyGraph", "Junction"]

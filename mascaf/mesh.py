@@ -619,6 +619,7 @@ class MeshManager:
         skel_color: Union[str, List[str]] = "crimson",
         skel_line_width: float = 3.0,
         skel_opacity: float = 0.95,
+        skel_marker_size: Optional[float] = None,
     ) -> Optional[object]:
         """
         Create a 3D visualization of a mesh.
@@ -633,6 +634,9 @@ class MeshManager:
             skel_color: Color(s) for skeleton overlay. Can be a single color or list of colors (one per skeleton)
             skel_line_width: Line width for skeleton overlay
             skel_opacity: Opacity for skeleton overlay (plotly only)
+            skel_marker_size: If ``None`` or ``0``, no node markers. A positive
+                value draws round markers at skeleton nodes (plotly marker size
+                / matplotlib scatter size).
 
         Returns:
             Figure object (backend-dependent) or None if visualization fails
@@ -664,6 +668,7 @@ class MeshManager:
                 skel_color=skel_color,
                 skel_line_width=skel_line_width,
                 skel_opacity=skel_opacity,
+                skel_marker_size=skel_marker_size,
             )
         elif backend == "matplotlib":
             return self._visualize_mesh_matplotlib(
@@ -674,6 +679,7 @@ class MeshManager:
                 skel=skel,
                 skel_color=skel_color,
                 skel_line_width=skel_line_width,
+                skel_marker_size=skel_marker_size,
             )
         else:
             raise ValueError(f"Unknown backend: {backend}")
@@ -692,6 +698,7 @@ class MeshManager:
         skel_color: Union[str, List[str]] = "crimson",
         skel_line_width: float = 3.0,
         skel_opacity: float = 0.95,
+        skel_marker_size: Optional[float] = None,
     ):
         """Plotly-based mesh visualization with optional SkeletonGraph overlay."""
         try:
@@ -755,6 +762,10 @@ class MeshManager:
                             len(skel_list) - len(colors)
                         )
 
+                show_markers = (
+                    skel_marker_size is not None and float(skel_marker_size) > 0
+                )
+
                 # Add each skeleton
                 for skel_idx, skeleton in enumerate(skel_list):
                     if skeleton is None:
@@ -788,6 +799,25 @@ class MeshManager:
                                 line=dict(color=color, width=float(skel_line_width)),
                                 opacity=float(skel_opacity),
                                 name=f"Skeleton {skel_idx}",
+                                showlegend=False,
+                            )
+                        )
+
+                    if show_markers and skeleton.number_of_nodes() > 0:
+                        positions = skeleton.get_all_positions()
+                        fig.add_trace(
+                            go.Scatter3d(
+                                x=positions[:, 0],
+                                y=positions[:, 1],
+                                z=positions[:, 2],
+                                mode="markers",
+                                marker=dict(
+                                    size=float(skel_marker_size),
+                                    color=color,
+                                    symbol="circle",
+                                ),
+                                opacity=float(skel_opacity),
+                                name=f"Skeleton nodes {skel_idx}",
                                 showlegend=False,
                             )
                         )
@@ -828,6 +858,7 @@ class MeshManager:
         skel: Optional[Union["SkeletonGraph", List["SkeletonGraph"]]] = None,
         skel_color: Union[str, List[str]] = "crimson",
         skel_line_width: float = 3.0,
+        skel_marker_size: Optional[float] = None,
     ):
         """Matplotlib-based mesh visualization with optional SkeletonGraph overlay."""
         try:
@@ -867,6 +898,10 @@ class MeshManager:
                             len(skel_list) - len(colors)
                         )
 
+                show_markers = (
+                    skel_marker_size is not None and float(skel_marker_size) > 0
+                )
+
                 # Add each skeleton
                 for skel_idx, skeleton in enumerate(skel_list):
                     if skeleton is None:
@@ -886,6 +921,17 @@ class MeshManager:
                             [pos_u[2], pos_v[2]],
                             color=color,
                             linewidth=float(skel_line_width),
+                        )
+
+                    if show_markers and skeleton.number_of_nodes() > 0:
+                        positions = skeleton.get_all_positions()
+                        ax.scatter(
+                            positions[:, 0],
+                            positions[:, 1],
+                            positions[:, 2],
+                            c=color,
+                            s=float(skel_marker_size),
+                            marker="o",
                         )
 
             ax.set_xlim(vertices[:, 0].min(), vertices[:, 0].max())

@@ -89,8 +89,8 @@ def get_ts_pipeline_params(idx: int) -> dict:
         do_forcing=True,
         n_rays=6,
         max_iterations=20,
-        step_size=1.0,
-        smoothing_weight=0.1,
+        step_scale=1.0,
+        lambda_smooth=0.1,
         preserve_terminal_nodes=True,
         preserve_branch_nodes=False,
     )

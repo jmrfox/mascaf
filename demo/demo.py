@@ -85,7 +85,7 @@ basis_options = BasisOptimizerOptions(
     do_snapping=True,
     do_forcing=False,
     max_iterations=10,
-    smoothing_weight=0.1,
+    lambda_smooth=0.1,
 )
 
 fit_options = FitOptions(

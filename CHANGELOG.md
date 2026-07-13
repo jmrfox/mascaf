@@ -6,6 +6,39 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ---
 
+## [1.1.0] — 2026-07-13
+
+### Added
+
+- Weighted localized centering force in `BasisOptimizer`, with magnitude-matched
+  `lambda_smooth` / `lambda_vertex` terms, `step_cap_factor`, and related options
+  (`repulsion_power`, `localization_beta`, `weight_epsilon`,
+  `vertex_repulsion_distance`).
+- Chord-midpoint snapping with orthogonal ray perturbation and a minimum chord
+  length filter (`snap_ray_perturb_*`, `snap_min_chord_fraction` /
+  `snap_min_chord_length`) so grazing surface hits are not treated as volume
+  chords.
+- `MorphologyGraph.from_skeleton_graph`, `resample`, and
+  `from_skeleton_graph_resample` for exact copy vs resampled basis construction.
+- `MorphologyGraph.get_outside_nodes` for mesh-containment queries.
+- Optional skeleton node markers in `MeshManager.visualize_mesh_3d`
+  (`skel_marker_size`).
+- `demo/demo_optimize` notebook for TS1 basis optimization.
+
+### Changed
+
+- `BasisOptimizerOptions.step_size` renamed to `step_scale`.
+- `BasisOptimizerOptions.smoothing_weight` renamed to `lambda_smooth`.
+- `CableFitter` builds the morphology basis via
+  `MorphologyGraph.from_skeleton_graph_resample`.
+
+### Removed
+
+- `BasisOptimizerOptions.snap_distance_multiplier` (replaced by chord-midpoint snap).
+- `BasisOptimizerOptions.fallback_distance` (missed rays raise instead of falling back).
+
+---
+
 ## [1.0.2] — 2026-05-10
 
 ### Added

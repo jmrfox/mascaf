@@ -13,10 +13,10 @@ from mascaf import (
     CableFitter,
     FitOptions,
     MeshManager,
+    MorphologyGraph,
     SkeletonGraph,
     example_mesh,
 )
-from mascaf.cable_fitting import _build_morphology_graph_from_skeleton
 import numpy as np
 
 # %% [markdown]
@@ -38,7 +38,7 @@ skeleton_points = np.array(
 skeleton = SkeletonGraph.from_polylines([skeleton_points])
 
 fit_options = FitOptions(max_edge_length=2.0, radius_strategy="equivalent_area")
-initial_basis = _build_morphology_graph_from_skeleton(
+initial_basis = MorphologyGraph.from_skeleton_graph_resample(
     skeleton,
     fit_options.max_edge_length,
 )
@@ -48,8 +48,8 @@ optimizer_options = BasisOptimizerOptions(
     do_snapping=True,
     do_forcing=True,
     max_iterations=50,
-    step_size=0.1,
-    smoothing_weight=0.5,
+    step_scale=0.1,
+    lambda_smooth=0.5,
     preserve_terminal_nodes=True,
 )
 
@@ -83,24 +83,24 @@ print(
 # ## Example 3: Compare optimizer settings
 
 # %%
-smoothing_weights = [0.0, 0.3, 0.5, 0.7, 0.9]
+lambda_smooths = [0.0, 0.3, 0.5, 0.7, 0.9]
 results = []
 
-for smoothing_weight in smoothing_weights:
+for lambda_smooth in lambda_smooths:
     test_options = BasisOptimizerOptions(
         do_pruning=False,
         do_snapping=True,
         do_forcing=True,
         max_iterations=50,
-        step_size=0.1,
-        smoothing_weight=smoothing_weight,
+        step_scale=0.1,
+        lambda_smooth=lambda_smooth,
         preserve_terminal_nodes=True,
     )
     test_optimizer = BasisOptimizer(initial_basis, mesh, test_options)
     test_optimizer.optimize()
     results.append(
         {
-            "smoothing_weight": smoothing_weight,
+            "lambda_smooth": lambda_smooth,
             "stats": test_optimizer.get_optimization_stats(),
         }
     )
@@ -110,7 +110,7 @@ print("\nSmoothing Weight | Nodes Outside Mesh | Total Length")
 print("-" * 55)
 for result in results:
     print(
-        f"      {result['smoothing_weight']:.1f}        | "
+        f"      {result['lambda_smooth']:.1f}        | "
         f"        {result['stats']['nodes_outside_mesh']:>2}         | "
         f"   {result['stats']['total_length']:.4f}"
     )
