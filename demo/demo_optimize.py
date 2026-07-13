@@ -82,9 +82,8 @@ basis_options = BasisOptimizerOptions(
     do_snapping=True,
     do_forcing=True,
     max_iterations=100,
-    step_scale=0.5,
-    lambda_smooth=0.2,
-    lambda_vertex=0.3,
+    lambda_centering=0.5,
+    lambda_smoothing=0.2,
     preserve_terminal_nodes=True,
     step_cap_factor=0.5,
 )

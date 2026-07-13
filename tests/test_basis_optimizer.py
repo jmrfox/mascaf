@@ -35,42 +35,12 @@ def test_options_new_force_defaults():
     assert opts.localization_beta == 2.0
     assert opts.weight_epsilon == 1e-6
     assert opts.step_cap_factor == 0.5
-    assert opts.step_scale == 0.1
-    assert opts.lambda_smooth == 0.2
-    assert opts.lambda_vertex == 0.0
-    assert opts.vertex_repulsion_distance is None
-
-
-def test_vertex_repulsion_pushes_close_nodes_apart(unit_sphere):
-    graph = _chain_graph(
-        [
-            np.array([-0.6, 0.0, 0.0]),
-            np.array([0.05, 0.0, 0.0]),
-            np.array([0.08, 0.0, 0.0]),
-            np.array([0.6, 0.0, 0.0]),
-        ]
-    )
-    opts = BasisOptimizerOptions(
-        do_pruning=False,
-        do_snapping=False,
-        do_forcing=True,
-        preserve_terminal_nodes=True,
-        lambda_smooth=0.0,
-        lambda_vertex=1.0,
-        vertex_repulsion_distance=0.5,
-        step_scale=0.2,
-        max_iterations=20,
-        convergence_threshold=1e-8,
-        n_rays=6,
-    )
-    before = np.linalg.norm(
-        graph.get_node_position(2) - graph.get_node_position(1)
-    )
-    optimized = BasisOptimizer(graph, unit_sphere, opts).optimize()
-    after = np.linalg.norm(
-        optimized.get_node_position(2) - optimized.get_node_position(1)
-    )
-    assert after > before
+    assert opts.lambda_centering == 0.5
+    assert opts.lambda_smoothing == 0.2
+    assert not hasattr(opts, "step_scale")
+    assert not hasattr(opts, "lambda_smooth")
+    assert not hasattr(opts, "lambda_vertex")
+    assert not hasattr(opts, "vertex_repulsion_distance")
 
 
 def test_centering_force_near_zero_at_sphere_center(unit_sphere):
@@ -99,8 +69,9 @@ def test_centering_force_pushes_off_center_point_inward(unit_sphere):
     force = opt._compute_centering_force(point)
 
     assert np.linalg.norm(force) > 1e-3
-    # Weighted average of unit rays has ||f|| <= 1 and is not unit-normalized.
-    assert np.linalg.norm(force) <= 1.0 + 1e-9
+    # F_centering = -d_min * weighted unit sum, so ||F|| <= d_min.
+    d_min = opt._ray_distance_to_surface(point, np.array([1.0, 0.0, 0.0]))
+    assert np.linalg.norm(force) <= d_min + 1e-6
     # Closest surface is +x, so repulsion should push toward -x (center).
     assert force[0] < 0.0
 
@@ -136,6 +107,22 @@ def test_localization_reduces_far_ray_weights(unit_sphere):
     # Strong localization should align more with -x (nearest wall at +x).
     assert f_strong[0] < f_weak[0]
     assert abs(f_strong[0]) > abs(f_weak[0]) * 0.9
+
+
+def test_smoothing_force_is_neighbor_centroid_pull(unit_sphere):
+    graph = _chain_graph(
+        [
+            np.array([-0.5, 0.0, 0.0]),
+            np.array([0.3, 0.1, 0.0]),
+            np.array([0.5, 0.0, 0.0]),
+        ]
+    )
+    opt = BasisOptimizer(graph, unit_sphere)
+    s = opt._compute_smoothing_force_for_node(1)
+    expected = 0.5 * (
+        graph.get_node_position(0) + graph.get_node_position(2)
+    ) - graph.get_node_position(1)
+    np.testing.assert_allclose(s, expected)
 
 
 def test_cap_step_by_surface_distance(unit_sphere):
@@ -179,8 +166,8 @@ def test_forcing_moves_interior_node_toward_center(unit_sphere):
         do_forcing=True,
         preserve_terminal_nodes=True,
         preserve_branch_nodes=False,
-        lambda_smooth=0.0,
-        step_scale=0.5,
+        lambda_centering=0.5,
+        lambda_smoothing=0.0,
         max_iterations=30,
         convergence_threshold=1e-6,
         step_cap_factor=0.5,
@@ -207,7 +194,7 @@ def test_forcing_preserves_terminal_nodes(unit_sphere):
         do_snapping=False,
         do_forcing=True,
         preserve_terminal_nodes=True,
-        lambda_smooth=0.0,
+        lambda_smoothing=0.0,
         max_iterations=5,
     )
     optimized = BasisOptimizer(graph, unit_sphere, opts).optimize()
@@ -215,8 +202,8 @@ def test_forcing_preserves_terminal_nodes(unit_sphere):
     np.testing.assert_allclose(optimized.get_node_position(2), terminals[1])
 
 
-def test_magnitude_matched_smoothing_blend(unit_sphere):
-    """delta_v = f + lambda_smooth * ||f|| * s_hat when s is already unit."""
+def test_forcing_blend_matches_new_force_model(unit_sphere):
+    """delta_v = lambda_centering * F_c + lambda_smoothing * F_s, then capped."""
     graph = _chain_graph(
         [
             np.array([-0.5, 0.0, 0.0]),
@@ -224,15 +211,15 @@ def test_magnitude_matched_smoothing_blend(unit_sphere):
             np.array([0.5, 0.0, 0.0]),
         ]
     )
-    lambda_smooth = 0.4
+    lambda_centering = 0.5
+    lambda_smoothing = 0.4
     opts = BasisOptimizerOptions(
         do_pruning=False,
         do_snapping=False,
         do_forcing=True,
         preserve_terminal_nodes=True,
-        lambda_smooth=lambda_smooth,
-        lambda_vertex=0.0,
-        step_scale=1.0,
+        lambda_centering=lambda_centering,
+        lambda_smoothing=lambda_smoothing,
         max_iterations=1,
         step_cap_factor=1.0,
         n_rays=6,
@@ -240,14 +227,12 @@ def test_magnitude_matched_smoothing_blend(unit_sphere):
     )
     opt = BasisOptimizer(graph, unit_sphere, opts)
     pos = opt.graph.get_node_position(1).copy()
-    f = opt._compute_centering_force(pos)
-    s = opt._compute_smoothing_direction_for_node(1)
-    f_norm = float(np.linalg.norm(f))
-    s_norm = float(np.linalg.norm(s))
-    assert f_norm > 1e-8
-    assert s_norm == pytest.approx(1.0, abs=1e-8)
+    f_c = opt._compute_centering_force(pos)
+    f_s = opt._compute_smoothing_force_for_node(1)
+    assert np.linalg.norm(f_c) > 1e-8
+    assert np.linalg.norm(f_s) > 1e-8
 
-    expected_delta = f + lambda_smooth * s * (f_norm / s_norm)
+    expected_delta = lambda_centering * f_c + lambda_smoothing * f_s
     expected_step = opt._cap_step_by_surface_distance(pos, expected_delta)
 
     opt._run_forcing_phase()

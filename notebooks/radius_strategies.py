@@ -34,8 +34,8 @@ mm.visualize_mesh_3d(skel=raw_skeleton, show_axes=False, height=800, width=1000)
 optimizer_options = BasisOptimizerOptions(
     do_pruning=False,
     max_iterations=20,
-    step_scale=2.0,
-    lambda_smooth=0.1,
+    lambda_centering=0.5,
+    lambda_smoothing=0.1,
     preserve_terminal_nodes=True,
     preserve_branch_nodes=False,
     do_snapping=True,

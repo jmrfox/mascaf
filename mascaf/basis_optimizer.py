@@ -21,13 +21,14 @@ class BasisOptimizerOptions:
     """Configuration for morphology-basis optimization.
 
     Forcing uses a weighted localized centering force with optional
-    magnitude-matched smoothing and vertex repulsion::
+    neighbor smoothing::
 
-        delta_v = f
-                 + lambda_smooth * s * ||f|| / ||s||
-                 + lambda_vertex * z * ||f|| / ||z||
+        delta_v = lambda_centering * F_centering
+                + lambda_smoothing * F_smoothing
 
-    Step size ``step_scale`` is ``h`` in ``v <- v + h * delta_v``.
+    where ``F_centering`` is scaled by ``d_min`` and ``F_smoothing`` is the
+    raw neighbor-centroid pull. The update ``v <- v + delta_v`` is then
+    capped by ``step_cap_factor`` times surface distance along ``delta_v``.
 
     All fields are keyword arguments to the dataclass constructor; see
     each field's inline annotation for defaults and semantics.
@@ -40,14 +41,12 @@ class BasisOptimizerOptions:
     do_snapping: bool = True
     do_forcing: bool = True
     max_iterations: int = 100
-    step_scale: float = 0.1
     convergence_threshold: float = 1e-4
     preserve_terminal_nodes: bool = True
     preserve_branch_nodes: bool = False
     n_rays: int = 6
-    lambda_smooth: float = 0.2
-    lambda_vertex: float = 0.0
-    vertex_repulsion_distance: Optional[float] = None
+    lambda_centering: float = 0.5
+    lambda_smoothing: float = 0.2
     repulsion_power: float = 1.0
     localization_beta: float = 2.0
     weight_epsilon: float = 1e-6
@@ -68,8 +67,8 @@ class BasisOptimizer:
     1. **Pruning** — remove short terminal branches.
     2. **Snapping** — move outside nodes back inside the mesh.
     3. **Forcing** — iteratively pull nodes toward the medial axis using a
-       weighted localized centering force with optional smoothing and
-       vertex–vertex repulsion, with steps capped by surface distance.
+       weighted localized centering force with optional neighbor smoothing,
+       with steps capped by surface distance.
 
     Parameters
     ----------
@@ -265,12 +264,11 @@ class BasisOptimizer:
 
         Each step forms::
 
-            delta_v = f
-                     + lambda_smooth * s * ||f|| / ||s||
-                     + lambda_vertex * z * ||f|| / ||z||
+            delta_v = lambda_centering * F_centering
+                    + lambda_smoothing * F_smoothing
 
-        then applies ``step = h * delta_v`` and caps the step length by
-        ``step_cap_factor`` times the surface distance along ``delta_v``.
+        then caps the step length by ``step_cap_factor`` times the surface
+        distance along ``delta_v``.
         """
         logger.info("Phase 2 - Forcing: max %d iterations", self.options.max_iterations)
         terminal_nodes = (
@@ -283,17 +281,12 @@ class BasisOptimizer:
             if self.options.preserve_branch_nodes
             else set()
         )
-        lambda_smooth = self.options.lambda_smooth
-        lambda_vertex = self.options.lambda_vertex
-        if self.options.vertex_repulsion_distance is not None:
-            repulsion_radius = float(self.options.vertex_repulsion_distance)
-        else:
-            repulsion_radius = self._max_edge_length()
+        lambda_centering = self.options.lambda_centering
+        lambda_smoothing = self.options.lambda_smoothing
         logger.info(
-            "  Forcing lambdas: smooth=%.4f vertex=%.4f repulsion_radius=%.6f",
-            lambda_smooth,
-            lambda_vertex,
-            repulsion_radius,
+            "  Forcing lambdas: centering=%.4f smoothing=%.4f",
+            lambda_centering,
+            lambda_smoothing,
         )
 
         for iteration in range(self.options.max_iterations):
@@ -307,24 +300,12 @@ class BasisOptimizer:
                     continue
 
                 pos = self.graph.get_node_position(node)
-                f = self._compute_centering_force(pos)
-                f_norm = float(np.linalg.norm(f))
-                delta_v = f.copy()
-
-                if lambda_smooth > 0 and f_norm > 1e-10:
-                    s = self._compute_smoothing_direction_for_node(node)
-                    s_norm = float(np.linalg.norm(s))
-                    if s_norm > 1e-10:
-                        delta_v = delta_v + lambda_smooth * s * (f_norm / s_norm)
-
-                if lambda_vertex > 0 and f_norm > 1e-10 and repulsion_radius > 0:
-                    z = self._compute_vertex_repulsion(node, repulsion_radius)
-                    z_norm = float(np.linalg.norm(z))
-                    if z_norm > 1e-10:
-                        delta_v = delta_v + lambda_vertex * z * (f_norm / z_norm)
-
-                step = self.options.step_scale * delta_v
-                step = self._cap_step_by_surface_distance(pos, step)
+                f_centering = self._compute_centering_force(pos)
+                f_smoothing = self._compute_smoothing_force_for_node(node)
+                delta_v = (
+                    lambda_centering * f_centering + lambda_smoothing * f_smoothing
+                )
+                step = self._cap_step_by_surface_distance(pos, delta_v)
                 self.graph.set_node_position(node, pos + step)
 
             movement = self._average_movement(
@@ -336,39 +317,6 @@ class BasisOptimizer:
                 logger.info("  Converged at iteration %d", iteration)
                 break
 
-    def _max_edge_length(self) -> float:
-        """Return the maximum current edge length in the basis graph."""
-        max_len = 0.0
-        for u, v in self.graph.edges():
-            pos_u = self.graph.get_node_position(u)
-            pos_v = self.graph.get_node_position(v)
-            max_len = max(max_len, float(np.linalg.norm(pos_v - pos_u)))
-        return max_len
-
-    def _compute_vertex_repulsion(self, node: int, radius: float) -> np.ndarray:
-        """Inverse-square repulsion from other vertices within ``radius``.
-
-        Returns
-        -------
-        np.ndarray
-            ``z = sum_j (x - x_j) / r_ij^3`` over other nodes with
-            ``0 < r_ij < radius``.
-        """
-        pos = self.graph.get_node_position(node)
-        force = np.zeros(3)
-        if radius <= 0:
-            return force
-
-        for other in self.graph.nodes():
-            if other == node:
-                continue
-            delta = pos - self.graph.get_node_position(other)
-            dist = float(np.linalg.norm(delta))
-            if dist <= 0.0 or dist >= radius:
-                continue
-            force += delta / (dist**3)
-        return force
-
     def _update_edge_lengths(self) -> None:
         """Update edge lengths after node positions have changed."""
         for u, v in self.graph.edges():
@@ -376,8 +324,8 @@ class BasisOptimizer:
             pos_v = self.graph.get_node_position(v)
             self.graph.edges[u, v]["length"] = float(np.linalg.norm(pos_v - pos_u))
 
-    def _compute_smoothing_direction_for_node(self, node: int) -> np.ndarray:
-        """Compute a unit smoothing direction from the node's neighbors."""
+    def _compute_smoothing_force_for_node(self, node: int) -> np.ndarray:
+        """Return ``mean(neighbor positions) - v`` (zeros if no neighbors)."""
         neighbors = list(self.graph.neighbors(node))
         if not neighbors:
             return np.zeros(3)
@@ -387,11 +335,7 @@ class BasisOptimizer:
             [self.graph.get_node_position(n) for n in neighbors],
             dtype=float,
         )
-        direction = neighbor_positions.mean(axis=0) - pos
-        norm = np.linalg.norm(direction)
-        if norm > 1e-10:
-            return direction / norm
-        return np.zeros(3)
+        return neighbor_positions.mean(axis=0) - pos
 
     def _compute_centering_force(self, point: np.ndarray) -> np.ndarray:
         """Compute a weighted localized centering force toward the medial axis.
@@ -401,8 +345,8 @@ class BasisOptimizer:
 
         ``w_i = (d_i + eps)^(-p) * exp(-beta * (d_i - d_min) / d_min)``,
 
-        then returns ``f = -sum_i x_i w_i / sum_i w_i`` without unit
-        normalization. Outside points fall back to the closest-point direction.
+        then returns ``F = -d_min * sum_i x_i w_i / sum_i w_i``. Outside
+        points fall back to the closest-point direction.
         """
         is_inside = self.mesh.contains(point.reshape(1, 3))[0]
         if not is_inside:
@@ -440,7 +384,7 @@ class BasisOptimizer:
 
             if weight_sum <= 1e-10:
                 return np.zeros(3)
-            return force / weight_sum
+            return d_min * (force / weight_sum)
         except Exception as exc:
             logger.error("Failed to compute centering force: %s", exc)
             return self._compute_closest_point_direction(point)

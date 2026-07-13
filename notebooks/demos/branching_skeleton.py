@@ -21,8 +21,8 @@ optimizer_options = BasisOptimizerOptions(
     do_snapping=True,
     do_forcing=True,
     max_iterations=5,
-    step_scale=0.01,
-    lambda_smooth=0.1,
+    lambda_centering=0.5,
+    lambda_smoothing=0.1,
     preserve_terminal_nodes=False,
     preserve_branch_nodes=False,
 )

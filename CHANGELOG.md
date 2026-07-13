@@ -6,6 +6,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ---
 
+## [1.1.1] — 2026-07-13
+
+### Changed
+
+- Basis forcing now uses independent scales
+  ``delta_v = lambda_centering * F_centering + lambda_smoothing * F_smoothing``,
+  with ``F_centering`` scaled by ``d_min`` and ``F_smoothing`` equal to the
+  raw neighbor-centroid pull (surface-distance step capping unchanged).
+
+### Removed
+
+- `BasisOptimizerOptions.step_scale`, `lambda_smooth`, `lambda_vertex`, and
+  `vertex_repulsion_distance`.
+
+---
+
 ## [1.1.0] — 2026-07-13
 
 ### Added
