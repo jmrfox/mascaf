@@ -830,10 +830,9 @@ class SkeletonGraph(Graph3D):
         use_mask = None
         if project_outside_only:
             try:
-                from trimesh.proximity import signed_distance
+                from .mesh_contains import points_inside_mesh
 
-                d = signed_distance(mesh, positions)
-                use_mask = d > 0  # outside
+                use_mask = ~points_inside_mesh(mesh, positions)
             except Exception:
                 use_mask = None
 

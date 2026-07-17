@@ -20,23 +20,36 @@ logger.addHandler(logging.NullHandler())
 class BasisOptimizerOptions:
     """Configuration for morphology-basis optimization.
 
-    Forcing uses a weighted localized centering force with optional
-    neighbor smoothing::
+    Pruning removes terminal stubs (terminal → branch through degree-2 nodes)
+    shorter than a threshold. Absolute ``pruning_length`` wins if set; else
+    ``pruning_length_fraction * longest_terminal_stub`` (from the graph at
+    the start of pruning).
 
-        delta_v = lambda_centering * F_centering
-                + lambda_smoothing * F_smoothing
+    Forcing uses a weighted localized centering force blended with
+    magnitude-matched neighbor smoothing::
+
+        delta_v = (1 - alpha_s) * F_centering
+                + alpha_s * F_smoothing * ||F_centering|| / ||F_smoothing||
 
     where ``F_centering`` is scaled by ``d_min`` and ``F_smoothing`` is the
-    raw neighbor-centroid pull. The update ``v <- v + delta_v`` is then
-    capped by ``step_cap_factor`` times surface distance along ``delta_v``.
+    raw neighbor-centroid pull. The update multiplies by ``step_scale``, then
+    caps by ``step_cap_factor`` times surface distance along the step.
+
+    Early stopping (any criterion may halt; all are active by default):
+
+    - average node movement below ``convergence_threshold``
+    - centering error ``E = sum_i ||F_centering_i||`` below
+      ``centering_error_stop_fraction`` times the first-iteration value
+    - relative change in ``E`` below ``centering_error_plateau_tol`` for
+      ``centering_error_plateau_patience`` consecutive iterations
 
     All fields are keyword arguments to the dataclass constructor; see
     each field's inline annotation for defaults and semantics.
     """
 
     do_pruning: bool = False
-    pruning_min_length: Optional[float] = None
-    pruning_min_length_fraction: Optional[float] = None
+    pruning_length: Optional[float] = None
+    pruning_length_fraction: Optional[float] = None
     pruning_iterative: bool = True
     do_snapping: bool = True
     do_forcing: bool = True
@@ -45,14 +58,21 @@ class BasisOptimizerOptions:
     preserve_terminal_nodes: bool = True
     preserve_branch_nodes: bool = False
     n_rays: int = 6
-    lambda_centering: float = 0.5
-    lambda_smoothing: float = 0.2
+    alpha_s: float = 0.2
+    step_scale: float = 1.0
     repulsion_power: float = 1.0
     localization_beta: float = 2.0
     weight_epsilon: float = 1e-6
     step_cap_factor: float = 0.5
+    outside_distance_tol: Optional[float] = None
+    outside_distance_tol_fraction: float = 1e-6
+    centering_error_stop_fraction: float = 0.1
+    centering_error_plateau_tol: float = 1e-3
+    centering_error_plateau_patience: int = 2
+    centering_error_increase_patience: int = 2
     snap_ray_perturb_scales: tuple[float, ...] = (1e-4, 1e-3, 1e-2, 5e-2)
     snap_ray_perturb_angles: int = 8
+    snap_chord_fraction: float = 0.25
     snap_min_chord_length: Optional[float] = None
     snap_min_chord_fraction: float = 5e-4
     verbose: bool = False
@@ -64,11 +84,11 @@ class BasisOptimizer:
     Runs up to three sequential phases controlled by
     :class:`BasisOptimizerOptions`:
 
-    1. **Pruning** — remove short terminal branches.
+    1. **Pruning** — remove short terminal→branch stubs.
     2. **Snapping** — move outside nodes back inside the mesh.
     3. **Forcing** — iteratively pull nodes toward the medial axis using a
        weighted localized centering force with optional neighbor smoothing,
-       with steps capped by surface distance.
+       with steps scaled by ``step_scale`` then capped by surface distance.
 
     Parameters
     ----------
@@ -142,7 +162,12 @@ class BasisOptimizer:
         return self.graph
 
     def _run_pruning_phase(self) -> None:
-        """Prune short terminal branches before geometric optimization."""
+        """Prune short terminal→branch stubs before geometric optimization.
+
+        Only paths from a terminal (degree 1) through degree-2 nodes to a
+        branch (degree ≥ 3) are candidates. Tip↔tip components are left alone.
+        The length threshold is resolved once from the graph at phase start.
+        """
         logger.info("Phase 0 - Pruning")
         if self.graph.number_of_nodes() == 0:
             logger.debug("Skipping pruning because basis graph is empty")
@@ -153,7 +178,7 @@ class BasisOptimizer:
             logger.debug("Skipping pruning because no pruning threshold was configured")
             return
 
-        logger.info("  Removing branches with length < %.4f", threshold)
+        logger.info("  Removing terminal stubs with length < %.4f", threshold)
         current = self.graph.copy()
         while True:
             terminal_nodes = sorted(current.get_terminal_nodes())
@@ -165,31 +190,21 @@ class BasisOptimizer:
                     continue
 
                 end, path, length = self._trace_from_terminal(current, terminal)
-                if len(path) <= 1:
-                    visited_terminals.add(terminal)
-                    continue
-
                 visited_terminals.add(terminal)
-                if end != terminal and current.degree(end) == 1:
-                    visited_terminals.add(end)
-
-                is_isolated = end != terminal and current.degree(end) == 1
-                ends_at_branch = end != terminal and current.degree(end) >= 3
-
-                should_remove = is_isolated or (ends_at_branch and length < threshold)
-                if not should_remove:
+                if len(path) <= 1:
                     continue
 
-                if ends_at_branch:
-                    nodes_to_remove.update(path[:-1])
-                else:
-                    nodes_to_remove.update(path)
+                ends_at_branch = end != terminal and current.degree(end) >= 3
+                if not (ends_at_branch and length < threshold):
+                    continue
+
+                nodes_to_remove.update(path[:-1])
 
             if not nodes_to_remove:
                 break
 
             logger.debug(
-                "Pruning %d nodes from short branches",
+                "Pruning %d nodes from short terminal stubs",
                 len(nodes_to_remove),
             )
             current.remove_nodes_from([n for n in nodes_to_remove if n in current])
@@ -199,30 +214,42 @@ class BasisOptimizer:
         self.graph = current
 
     def _resolve_pruning_threshold(self) -> Optional[float]:
-        """Resolve the branch-pruning threshold from absolute or fraction input."""
-        if self.options.pruning_min_length is not None:
-            return float(self.options.pruning_min_length)
+        """Resolve absolute or fraction-of-longest-stub pruning threshold.
 
-        fraction = self.options.pruning_min_length_fraction
+        Absolute ``pruning_length`` takes precedence. Otherwise
+        ``pruning_length_fraction * max(terminal→branch stub lengths)`` from
+        the current graph (called once at phase start).
+        """
+        if self.options.pruning_length is not None:
+            return float(self.options.pruning_length)
+
+        fraction = self.options.pruning_length_fraction
         if fraction is None:
             return None
+        if fraction <= 0 or fraction > 1:
+            raise ValueError(
+                f"pruning_length_fraction must be in (0, 1], got {fraction}"
+            )
 
-        branch_lengths = list(self._compute_branch_lengths(self.graph).values())
-        if not branch_lengths:
+        stub_lengths = self._terminal_stub_lengths(self.graph)
+        if not stub_lengths:
             return None
-        if fraction <= 0 or fraction >= 1:
-            raise ValueError(f"Pruning fraction must be in (0,1), got {fraction}")
-        return float(np.percentile(branch_lengths, float(fraction * 100.0)))
+        return float(fraction) * float(max(stub_lengths))
 
     def _run_snapping_phase(self) -> None:
-        """Snap outside basis nodes into the mesh via chord midpoints.
+        """Snap outside basis nodes into the mesh along ray chords.
 
-        For each outside node, move along the nearest-surface direction to the
-        midpoint between the first and second ray–mesh intersections. Failures
-        for individual nodes are logged as warnings; a summary warning is
-        emitted if any nodes remain outside after the phase.
+        For each outside node, move along the nearest-surface direction to a
+        point a fraction ``snap_chord_fraction`` of the way from the first to
+        the second usable ray–mesh intersection (default 0.25). Failures for
+        individual nodes are logged as warnings; a summary warning is emitted
+        if any nodes remain outside after the phase.
         """
-        outside_node_ids = self.graph.get_outside_nodes(self.mesh)
+        outside_node_ids = self.graph.get_outside_nodes(
+            self.mesh,
+            tol=self.options.outside_distance_tol,
+            tol_fraction=self.options.outside_distance_tol_fraction,
+        )
         logger.info(
             "Phase 1 - Snapping: %d nodes outside mesh",
             len(outside_node_ids),
@@ -244,14 +271,18 @@ class BasisOptimizer:
                 )
                 continue
             logger.debug(
-                "Snapping node %s from %s to chord midpoint %s",
+                "Snapping node %s from %s to chord point %s",
                 node,
                 pos,
                 new_pos,
             )
             self.graph.set_node_position(node, new_pos)
 
-        still_outside = self.graph.get_outside_nodes(self.mesh)
+        still_outside = self.graph.get_outside_nodes(
+            self.mesh,
+            tol=self.options.outside_distance_tol,
+            tol_fraction=self.options.outside_distance_tol_fraction,
+        )
         if still_outside:
             logger.warning(
                 "Snapping complete but %d node(s) remain outside the mesh: %s",
@@ -264,13 +295,33 @@ class BasisOptimizer:
 
         Each step forms::
 
-            delta_v = lambda_centering * F_centering
-                    + lambda_smoothing * F_smoothing
+            delta_v = (1 - alpha_s) * F_centering
+                    + alpha_s * F_smoothing * ||F_centering|| / ||F_smoothing||
 
-        then caps the step length by ``step_cap_factor`` times the surface
-        distance along ``delta_v``.
+        then applies ``step_scale * delta_v`` and caps by ``step_cap_factor``
+        times the surface distance along that direction.
+
+        Requires every node to be inside the mesh; raises ``RuntimeError`` if
+        any node is clearly outside before forcing or after a step (see
+        ``outside_distance_tol`` / :func:`mascaf.mesh_contains.point_inside_mesh`;
+        signed-distance check — not raw ``contains``, which is flaky on the
+        surface). Early stopping (any may halt) uses average movement,
+        centering-error fraction of the first-iteration value, and
+        centering-error plateau detection.
         """
         logger.info("Phase 2 - Forcing: max %d iterations", self.options.max_iterations)
+
+        outside_before = [
+            n
+            for n in self.graph.nodes()
+            if self._is_clearly_outside(self.graph.get_node_position(n))
+        ]
+        if outside_before:
+            raise RuntimeError(
+                "Forcing requires all nodes inside the mesh; "
+                f"outside nodes: {outside_before}"
+            )
+
         terminal_nodes = (
             self.graph.get_terminal_nodes()
             if self.options.preserve_terminal_nodes
@@ -281,13 +332,23 @@ class BasisOptimizer:
             if self.options.preserve_branch_nodes
             else set()
         )
-        lambda_centering = self.options.lambda_centering
-        lambda_smoothing = self.options.lambda_smoothing
+        protected = terminal_nodes | branch_nodes
+        alpha_s = float(self.options.alpha_s)
+        step_scale = float(self.options.step_scale)
+        stop_fraction = float(self.options.centering_error_stop_fraction)
+        plateau_tol = float(self.options.centering_error_plateau_tol)
+        plateau_patience = max(1, int(self.options.centering_error_plateau_patience))
+        increase_patience = max(1, int(self.options.centering_error_increase_patience))
         logger.info(
-            "  Forcing lambdas: centering=%.4f smoothing=%.4f",
-            lambda_centering,
-            lambda_smoothing,
+            "  Forcing alpha_s=%.4f step_scale=%.4f",
+            alpha_s,
+            step_scale,
         )
+
+        e0: Optional[float] = None
+        e_prev: Optional[float] = None
+        plateau_streak = 0
+        increase_streak = 0
 
         for iteration in range(self.options.max_iterations):
             old_positions = self.graph.get_all_positions()
@@ -295,26 +356,113 @@ class BasisOptimizer:
                 logger.info("Phase 2 - Forcing skipped because basis graph is empty")
                 break
 
+            centering_error = 0.0
             for node in self.graph.nodes():
-                if node in terminal_nodes or node in branch_nodes:
+                if node in protected:
                     continue
 
                 pos = self.graph.get_node_position(node)
                 f_centering = self._compute_centering_force(pos)
+                f_c_norm = float(np.linalg.norm(f_centering))
+                centering_error += f_c_norm
                 f_smoothing = self._compute_smoothing_force_for_node(node)
-                delta_v = (
-                    lambda_centering * f_centering + lambda_smoothing * f_smoothing
-                )
+                f_s_norm = float(np.linalg.norm(f_smoothing))
+                if f_s_norm > 1e-15 and f_c_norm > 1e-15 and alpha_s > 0.0:
+                    delta_v = (1.0 - alpha_s) * f_centering + (
+                        alpha_s * f_smoothing * (f_c_norm / f_s_norm)
+                    )
+                else:
+                    delta_v = (1.0 - alpha_s) * f_centering
+                delta_v = step_scale * delta_v
                 step = self._cap_step_by_surface_distance(pos, delta_v)
-                self.graph.set_node_position(node, pos + step)
+                new_pos = pos + step
+                if self._is_clearly_outside(new_pos):
+                    detail = self._format_forcing_outside_debug(
+                        node=node,
+                        iteration=iteration,
+                        pos=pos,
+                        new_pos=new_pos,
+                        step=step,
+                        delta_v=delta_v,
+                        f_centering=f_centering,
+                        f_smoothing=f_smoothing,
+                    )
+                    logger.error(detail)
+                    raise RuntimeError(detail)
+                self.graph.set_node_position(node, new_pos)
 
             movement = self._average_movement(
                 old_positions,
                 self.graph.get_all_positions(),
             )
-            logger.info("  Iteration %d: avg movement = %.6f", iteration, movement)
+            logger.info(
+                "  Iteration %d: avg movement = %.6f, centering_error = %.6e",
+                iteration,
+                movement,
+                centering_error,
+            )
+
+            if e0 is None:
+                e0 = centering_error
+                if e0 <= 1e-15:
+                    logger.info(
+                        "  Converged at iteration %d: initial centering error ~0",
+                        iteration,
+                    )
+                    break
+            elif centering_error < stop_fraction * e0:
+                logger.info(
+                    "  Converged at iteration %d: centering error %.6e "
+                    "< %.3f * initial %.6e",
+                    iteration,
+                    centering_error,
+                    stop_fraction,
+                    e0,
+                )
+                break
+
+            if e_prev is not None:
+                denom = max(e_prev, 1e-15)
+                rel_change = abs(centering_error - e_prev) / denom
+                if rel_change < plateau_tol:
+                    plateau_streak += 1
+                else:
+                    plateau_streak = 0
+                if plateau_streak >= plateau_patience:
+                    logger.info(
+                        "  Converged at iteration %d: centering error plateau "
+                        "(rel change < %.3e for %d iterations)",
+                        iteration,
+                        plateau_tol,
+                        plateau_patience,
+                    )
+                    break
+
+                if centering_error > e_prev:
+                    increase_streak += 1
+                    if increase_streak >= increase_patience:
+                        logger.warning(
+                            "  Centering error increased for %d consecutive "
+                            "iterations (now %.6e, was %.6e at iter %d)",
+                            increase_streak,
+                            centering_error,
+                            e_prev,
+                            iteration - 1,
+                        )
+                        increase_streak = 0
+                else:
+                    increase_streak = 0
+
+            e_prev = centering_error
+
             if movement < self.options.convergence_threshold:
-                logger.info("  Converged at iteration %d", iteration)
+                logger.info(
+                    "  Converged at iteration %d: avg movement %.6e "
+                    "< threshold %.6e",
+                    iteration,
+                    movement,
+                    self.options.convergence_threshold,
+                )
                 break
 
     def _update_edge_lengths(self) -> None:
@@ -348,7 +496,7 @@ class BasisOptimizer:
         then returns ``F = -d_min * sum_i x_i w_i / sum_i w_i``. Outside
         points fall back to the closest-point direction.
         """
-        is_inside = self.mesh.contains(point.reshape(1, 3))[0]
+        is_inside = self._point_inside_mesh(point)
         if not is_inside:
             return self._compute_closest_point_direction(point)
 
@@ -389,6 +537,36 @@ class BasisOptimizer:
             logger.error("Failed to compute centering force: %s", exc)
             return self._compute_closest_point_direction(point)
 
+    def _outside_distance_tol(self) -> float:
+        """Tolerance for treating a point as clearly outside the mesh."""
+        from .mesh_contains import default_distance_tol
+
+        return default_distance_tol(
+            self.mesh,
+            tol=self.options.outside_distance_tol,
+            tol_fraction=self.options.outside_distance_tol_fraction,
+        )
+
+    def _signed_distance(self, point: np.ndarray) -> float:
+        """Return signed distance to the mesh (positive inside)."""
+        from .mesh_contains import signed_distances
+
+        return float(signed_distances(self.mesh, point)[0])
+
+    def _point_inside_mesh(self, point: np.ndarray) -> bool:
+        """True if point is inside or within the exterior distance tolerance."""
+        from .mesh_contains import point_inside_mesh
+
+        return point_inside_mesh(
+            self.mesh,
+            point,
+            tol=self.options.outside_distance_tol,
+            tol_fraction=self.options.outside_distance_tol_fraction,
+        )
+
+    def _is_clearly_outside(self, point: np.ndarray) -> bool:
+        """True only if the point is exterior beyond the distance tolerance."""
+        return not self._point_inside_mesh(point)
     def _cap_step_by_surface_distance(
         self,
         point: np.ndarray,
@@ -410,6 +588,97 @@ class BasisOptimizer:
             return step * (max_step / step_norm)
         return step
 
+    def _format_forcing_outside_debug(
+        self,
+        *,
+        node: int,
+        iteration: int,
+        pos: np.ndarray,
+        new_pos: np.ndarray,
+        step: np.ndarray,
+        delta_v: np.ndarray,
+        f_centering: np.ndarray,
+        f_smoothing: np.ndarray,
+    ) -> str:
+        """Build a diagnostic message when a forcing step leaves the mesh."""
+        step_norm = float(np.linalg.norm(step))
+        delta_norm = float(np.linalg.norm(delta_v))
+        f_c_norm = float(np.linalg.norm(f_centering))
+        f_s_norm = float(np.linalg.norm(f_smoothing))
+        tol = self._outside_distance_tol()
+
+        try:
+            inside_before = self._point_inside_mesh(pos)
+        except Exception as exc:
+            inside_before = f"<error: {exc}>"
+        try:
+            inside_after = self._point_inside_mesh(new_pos)
+        except Exception as exc:
+            inside_after = f"<error: {exc}>"
+        try:
+            signed_before = self._signed_distance(pos)
+        except Exception as exc:
+            signed_before = f"<error: {exc}>"
+        try:
+            signed_after = self._signed_distance(new_pos)
+        except Exception as exc:
+            signed_after = f"<error: {exc}>"
+
+        d_force: float | str
+        max_step: float | str
+        was_capped: str
+        if step_norm <= 1e-10:
+            d_force = "n/a (zero step)"
+            max_step = "n/a"
+            was_capped = "n/a"
+            direction = np.zeros(3)
+        else:
+            direction = step / step_norm
+            try:
+                d_force = self._ray_distance_to_surface(pos, direction)
+                max_step = self.options.step_cap_factor * float(d_force)
+                was_capped = (
+                    "yes"
+                    if delta_norm > float(max_step) + 1e-12
+                    else "no"
+                )
+            except Exception as exc:
+                d_force = f"<error: {exc}>"
+                max_step = "n/a"
+                was_capped = "n/a"
+
+        ratio = (
+            step_norm / float(d_force)
+            if isinstance(d_force, float) and d_force > 1e-15
+            else "n/a"
+        )
+
+        return (
+            f"Forcing moved node {node} outside the mesh at iteration {iteration}:\n"
+            f"  pos_before = {pos}\n"
+            f"  pos_after  = {new_pos}\n"
+            f"  step       = {step}\n"
+            f"  ||step||   = {step_norm:.6e}\n"
+            f"  ||delta_v||= {delta_norm:.6e}\n"
+            f"  ||F_c||    = {f_c_norm:.6e}\n"
+            f"  ||F_s||    = {f_s_norm:.6e}\n"
+            f"  direction  = {direction}\n"
+            f"  d_force (ray to first hit) = {d_force}\n"
+            f"  step_scale = {self.options.step_scale}\n"
+            f"  step_cap_factor = {self.options.step_cap_factor}\n"
+            f"  max_step   = {max_step}\n"
+            f"  ||step||/d_force = {ratio}\n"
+            f"  step was capped vs uncapped delta_v: {was_capped}\n"
+            f"  inside(before) = {inside_before}\n"
+            f"  inside(after)  = {inside_after}\n"
+            f"  signed_distance(before) = {signed_before} "
+            f"(positive inside, negative outside)\n"
+            f"  signed_distance(after)  = {signed_after}\n"
+            f"  outside_distance_tol    = {tol:.6e}\n"
+            f"  clearly_outside(after)  = "
+            f"{isinstance(signed_after, float) and signed_after < -tol}"
+        )
+
     def _snap_min_chord(self) -> float:
         """Minimum accepted enter–exit chord length for snapping."""
         if self.options.snap_min_chord_length is not None:
@@ -421,12 +690,14 @@ class BasisOptimizer:
     def _snap_point_to_chord_midpoint(
         self, point: np.ndarray
     ) -> Optional[np.ndarray]:
-        """Return the midpoint of the first two ray hits toward the nearest surface.
+        """Return a point along a chord toward the nearest surface.
 
-        If the closest-point ray yields an odd hit count or a vanishingly short
-        chord (grazing double-hit near an edge/crease), the direction is
-        perturbed until a usable even-hit chord is found. Returns ``None`` if
-        no suitable ray is found.
+        Tries the closest-point direction, then small angular perturbations.
+        Along each ray, consecutive hit pairs are considered (not only the
+        first pair, and not only even hit counts): the first pair whose chord
+        length is at least :meth:`_snap_min_chord` and whose interpolated
+        point (``snap_chord_fraction`` from hit 1 toward hit 2) lies inside
+        the mesh is accepted. Returns ``None`` if no suitable chord is found.
         """
         direction, dist = self._compute_snap_direction(point)
         if dist < 1e-10 or float(np.linalg.norm(direction)) < 1e-10:
@@ -437,32 +708,39 @@ class BasisOptimizer:
             )
             return None
 
-        hits = self._ray_intersections_even_hits(point, direction)
-        if hits is None:
+        mid = self._snap_midpoint_from_ray_candidates(point, direction)
+        if mid is None:
             logger.warning(
-                "Snap failed: could not find an even-hit ray from point %s "
+                "Snap failed: could not find an interior chord from point %s "
                 "near direction %s",
                 point,
                 direction,
             )
             return None
-        return 0.5 * (hits[0] + hits[1])
+        return mid
 
-    def _ray_intersections_even_hits(
+    def _snap_point_on_chord(
+        self, hit_enter: np.ndarray, hit_exit: np.ndarray
+    ) -> np.ndarray:
+        """Interpolate ``snap_chord_fraction`` of the way from enter to exit."""
+        frac = float(self.options.snap_chord_fraction)
+        return (1.0 - frac) * hit_enter + frac * hit_exit
+
+    def _snap_midpoint_from_ray_candidates(
         self,
         point: np.ndarray,
         direction: np.ndarray,
     ) -> Optional[np.ndarray]:
-        """Return sorted ray hits with an even count and usable chord length.
+        """Try snap directions until a chord sample point lies inside the mesh.
 
-        Tries ``direction`` first, then a deterministic ring of small angular
-        perturbations in the plane orthogonal to ``direction``. Candidates with
-        fewer than two even hits, or with a first-pair chord shorter than
-        :meth:`_snap_min_chord`, are skipped (near-surface grazing hits).
+        Prefers hit pairs with chord length at least :meth:`_snap_min_chord`.
+        If none yield an interior sample at ``snap_chord_fraction``, falls back
+        to any pair whose sample is inside (short grazing chords included).
         """
         direction = np.asarray(direction, dtype=float)
         direction = direction / (np.linalg.norm(direction) + 1e-15)
         min_chord = self._snap_min_chord()
+        fallback: Optional[np.ndarray] = None
 
         for candidate in self._snap_ray_direction_candidates(direction):
             try:
@@ -470,37 +748,47 @@ class BasisOptimizer:
             except RuntimeError:
                 continue
             n_hits = int(hits.shape[0])
-            if n_hits < 2 or n_hits % 2 != 0:
+            if n_hits < 2:
                 logger.debug(
-                    "Snap ray from %s along %s produced %d hits (need even >= 2)",
+                    "Snap ray from %s along %s produced %d hits (need >= 2)",
                     point,
                     candidate,
                     n_hits,
                 )
                 continue
 
-            chord = float(np.linalg.norm(hits[1] - hits[0]))
-            if chord < min_chord:
-                logger.debug(
-                    "Snap ray from %s along %s: chord %.3e < min %.3e (reject)",
-                    point,
-                    candidate,
-                    chord,
-                    min_chord,
-                )
-                continue
-
-            if not np.allclose(candidate, direction):
-                logger.debug(
-                    "Snap ray perturbed for point %s: %d hits, chord %.3e, "
-                    "direction %s",
-                    point,
-                    n_hits,
-                    chord,
-                    candidate,
-                )
-            return hits
-        return None
+            for i in range(n_hits - 1):
+                chord = float(np.linalg.norm(hits[i + 1] - hits[i]))
+                sample = self._snap_point_on_chord(hits[i], hits[i + 1])
+                if not self._point_inside_mesh(sample):
+                    continue
+                if chord >= min_chord:
+                    if i > 0 or not np.allclose(candidate, direction):
+                        logger.debug(
+                            "Snap chord for point %s: hits pair (%d,%d) of %d, "
+                            "chord %.3e, fraction %.3f, direction %s",
+                            point,
+                            i,
+                            i + 1,
+                            n_hits,
+                            chord,
+                            float(self.options.snap_chord_fraction),
+                            candidate,
+                        )
+                    return sample
+                if fallback is None:
+                    fallback = sample
+                    logger.debug(
+                        "Snap ray from %s along %s: pair (%d,%d) chord %.3e "
+                        "< min %.3e but sample inside (fallback candidate)",
+                        point,
+                        candidate,
+                        i,
+                        i + 1,
+                        chord,
+                        min_chord,
+                    )
+        return fallback
 
     def _snap_ray_direction_candidates(
         self, direction: np.ndarray
@@ -628,7 +916,11 @@ class BasisOptimizer:
 
     def get_optimization_stats(self) -> dict:
         """Return summary statistics for the optimized basis graph."""
-        outside_node_ids = self.graph.get_outside_nodes(self.mesh)
+        outside_node_ids = self.graph.get_outside_nodes(
+            self.mesh,
+            tol=self.options.outside_distance_tol,
+            tol_fraction=self.options.outside_distance_tol_fraction,
+        )
         return {
             "num_nodes": self.graph.number_of_nodes(),
             "num_edges": self.graph.number_of_edges(),
@@ -638,14 +930,16 @@ class BasisOptimizer:
             "nodes_outside_mesh": len(outside_node_ids),
         }
 
-    def _compute_branch_lengths(self, graph: Graph3D) -> dict[tuple[int, int], float]:
-        """Compute terminal-to-branch lengths for pruning thresholding."""
-        branch_lengths: dict[tuple[int, int], float] = {}
+    def _terminal_stub_lengths(self, graph: Graph3D) -> list[float]:
+        """Lengths of terminal→branch stubs (degree-2 chain, no tip↔tip)."""
+        lengths: list[float] = []
         for terminal in graph.get_terminal_nodes():
-            end, _, length = self._trace_from_terminal(graph, terminal)
-            if end != terminal:
-                branch_lengths[(terminal, end)] = length
-        return branch_lengths
+            end, path, length = self._trace_from_terminal(graph, terminal)
+            if len(path) <= 1:
+                continue
+            if end != terminal and graph.degree(end) >= 3:
+                lengths.append(float(length))
+        return lengths
 
     def _trace_from_terminal(
         self,

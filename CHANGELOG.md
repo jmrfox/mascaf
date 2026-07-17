@@ -6,6 +6,46 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- `mascaf.mesh_contains` with ``point_inside_mesh`` / ``points_inside_mesh``
+  (signed-distance containment; positive inside, negative outside; surface
+  shell within tolerance counts as inside). Used by MorphologyGraph outside
+  queries, BasisOptimizer snapping/forcing/centering, and SkeletonGraph
+  outside-only projection so those checks agree.
+- `BasisOptimizerOptions.step_scale` (default ``1.0``): multiplies the blended
+  forcing update before surface-distance capping.
+- `BasisOptimizerOptions.pruning_length` and `pruning_length_fraction`:
+  prune terminal→branch stubs shorter than an absolute length, or shorter than
+  ``pruning_length_fraction * longest_terminal_stub`` (resolved once at phase
+  start). Absolute wins if both are set.
+
+### Changed
+
+- Basis forcing blend is again magnitude-matched:
+  ``delta_v = (1 - alpha_s) F_centering + alpha_s F_smoothing ||F_c|| / ||F_s||``
+  (replaces independent ``lambda_centering`` / ``lambda_smoothing`` scales).
+- Basis pruning only removes terminal→branch stubs under the threshold;
+  tip↔tip isolated chains are no longer auto-removed.
+- ``MorphologyGraph.get_outside_nodes`` no longer uses ``mesh.contains``.
+- Chord-midpoint snapping considers consecutive ray-hit pairs (including on
+  odd-hit rays), skipping short grazing chords, so thin/crease cases that
+  previously left nodes outside after snapping can be recovered.
+- Snapping places nodes at ``snap_chord_fraction`` along the enter→exit chord
+  (default ``0.25``, was fixed midpoint ``0.5``).
+
+### Removed
+
+- `BasisOptimizerOptions.lambda_centering` and `lambda_smoothing`
+  (use ``alpha_s``).
+- `BasisOptimizerOptions.pruning_min_length` and `pruning_min_length_fraction`
+  (percentile-based; replaced by ``pruning_length`` /
+  ``pruning_length_fraction`` as fraction of the longest stub).
+
+---
+
 ## [1.1.1] — 2026-07-13
 
 ### Changed

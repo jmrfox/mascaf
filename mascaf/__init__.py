@@ -47,6 +47,7 @@ from .cgal import (  # noqa: E402
 )
 from .graph3d import Graph3D  # noqa: E402
 from .mesh import MeshManager, example_mesh  # noqa: E402
+from .mesh_contains import point_inside_mesh, points_inside_mesh  # noqa: E402
 from .skeleton import SkeletonGraph  # noqa: E402
 from .morphology_graph import (  # noqa: E402
     MorphologyGraph,
@@ -67,6 +68,8 @@ __all__ = [
     # Mesh and skeleton
     "MeshManager",
     "example_mesh",
+    "point_inside_mesh",
+    "points_inside_mesh",
     "Graph3D",
     "SkeletonGraph",
     # SWC model (from swctools)

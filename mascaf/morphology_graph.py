@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import networkx as nx
 import numpy as np
@@ -667,13 +667,27 @@ class MorphologyGraph(Graph3D):
 
         return scale_factor
 
-    def get_outside_nodes(self, mesh) -> list[int]:
-        """Return node IDs whose positions lie outside the mesh volume.
+    def get_outside_nodes(
+        self,
+        mesh,
+        *,
+        tol: Optional[float] = None,
+        tol_fraction: float = 1e-6,
+    ) -> list[int]:
+        """Return node IDs whose positions lie clearly outside the mesh volume.
+
+        Uses :func:`mascaf.mesh_contains.points_inside_mesh` (signed-distance
+        with tolerance), not raw ``mesh.contains``.
 
         Parameters
         ----------
         mesh : trimesh.Trimesh or MeshManager
             Target mesh used for containment tests.
+        tol : float or None
+            Absolute exterior tolerance. When ``None``, uses
+            ``tol_fraction * ||mesh.extents||``.
+        tol_fraction : float
+            Relative scale used when ``tol`` is ``None``.
 
         Returns
         -------
@@ -703,7 +717,14 @@ class MorphologyGraph(Graph3D):
         )
 
         try:
-            inside_mask = mesh_obj.contains(all_pts)
+            from .mesh_contains import points_inside_mesh
+
+            inside_mask = points_inside_mesh(
+                mesh_obj,
+                all_pts,
+                tol=tol,
+                tol_fraction=tol_fraction,
+            )
             outside_node_ids = [
                 node_ids[i] for i, is_out in enumerate(~inside_mask) if is_out
             ]

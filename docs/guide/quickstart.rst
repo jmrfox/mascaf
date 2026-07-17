@@ -39,7 +39,7 @@ Full example
            do_snapping=True,
            do_forcing=True,
            max_iterations=50,
-           lambda_smoothing=0.5,
+           alpha_s=0.5,
        ),
    )
 

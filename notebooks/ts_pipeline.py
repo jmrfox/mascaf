@@ -7,13 +7,15 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from mascaf import (
+    BasisOptimizer,
     BasisOptimizerOptions,
-    CableFitter,
     FitOptions,
     MeshManager,
+    MorphologyGraph,
     SkeletonGraph,
     Validation,
 )
+from mascaf.cable_fitting import _compute_morphology_node_radii
 from swctools import SWCModel, plot_model
 
 if TYPE_CHECKING:
@@ -26,10 +28,10 @@ print("✅ Libraries imported successfully!")
 
 # %%
 # per-spine parameters
-
 def get_ts_pipeline_params(idx: int) -> dict:
     qst = 0.5  # for all
     mcst = 5  # for all
+    max_edge_length_fraction = 0.1 # fraction of the spine's bounding box diagonal
 
     fig_width = 800
     fig_height = 600
@@ -58,15 +60,15 @@ def get_ts_pipeline_params(idx: int) -> dict:
         76: 1.0,
     }
 
-    pruning_fractions = {
-        1: 0.2, 
-        2: 0.2, 
-        3: 0.2, 
-        4: 0.2, 
-        21: 0.2, 
-        24: 0.2, 
-        48: 0.2, 
-        67: 0.2, 
+    pruning_length_fractions = {
+        1: 0.2,
+        2: 0.2,
+        3: 0.2,
+        4: 0.2,
+        21: 0.2,
+        24: 0.2,
+        48: 0.2,
+        67: 0.2,
         76: 0.2,
     }
 
@@ -84,13 +86,13 @@ def get_ts_pipeline_params(idx: int) -> dict:
 
     optimizer_options = BasisOptimizerOptions(
         do_pruning=True,
-        pruning_min_length_fraction=pruning_fractions[idx],
+        pruning_length_fraction=pruning_length_fractions[idx],
         do_snapping=True,
         do_forcing=True,
-        n_rays=6,
-        max_iterations=20,
-        lambda_centering=0.5,
-        lambda_smoothing=0.1,
+        n_rays=10,
+        max_iterations=3,
+        alpha_s=0.1,
+        step_scale=1.0,
         preserve_terminal_nodes=True,
         preserve_branch_nodes=False,
     )
@@ -107,21 +109,20 @@ def get_ts_pipeline_params(idx: int) -> dict:
         # "fit_options": fit_options,
         "fig_width": fig_width,
         "fig_height": fig_height,
-        # "max_edge_length": max_edge_lengths[idx],
-        "max_edge_length": None,
+        "max_edge_length_fraction": max_edge_length_fraction,
         "optimizer_options": optimizer_options,
     }
 
 pdf_scale = 2
 
 # %%
-spine_idx = 21
+spine_idx = 4
 params = get_ts_pipeline_params(spine_idx)
 
 mesh_path = f"../data/mesh/processed/{params['object_name']}.obj"
 mm = MeshManager(mesh_path=mesh_path)
 model_length = mm.bounding_box_diagonal()
-params["max_edge_length"] = int(model_length * 0.09)
+params["max_edge_length"] = int(model_length * params["max_edge_length_fraction"])
 
 polylines_name = f"TS{spine_idx}_qst{params['qst']}_mcst{params['mcst']}"
 skeleton = SkeletonGraph.from_txt(
@@ -179,26 +180,70 @@ mesh_skel_fig.write_image(
 mesh_skel_fig.show()
 
 # %%
-swc_out_dir = f"../data/swc/current/{polylines_name}"
-swc_filepath = f"{swc_out_dir}/TS{spine_idx}_mel{params["max_edge_length"]}.swc"
+# Basis construction + optimization (before radius fitting)
+basis = MorphologyGraph.from_skeleton_graph_resample(
+    skeleton,
+    float(params["max_edge_length"]),
+)
+print(
+    f"Initial basis: {basis.number_of_nodes()} nodes, "
+    f"{basis.number_of_edges()} edges"
+)
 
-# check if directory exists, if not create it
+optimizer = BasisOptimizer(basis, mm.mesh, params["optimizer_options"])
+optimized_basis = optimizer.optimize()
+stats = optimizer.get_optimization_stats()
+print("Basis optimization statistics:")
+for key, value in stats.items():
+    print(f"  {key}: {value}")
+
+# FIGURE: original (red) vs optimized (blue) basis
+basis_opt_fig: "go.Figure" = mm.visualize_mesh_3d(
+    skel=[basis, optimized_basis],
+    show_axes=True,
+    title="",
+    skel_color=["red", "blue"],
+    skel_line_width=3.0,
+    skel_marker_size=2.0,
+)
+basis_opt_fig.update_layout(
+    scene=dict(
+        camera=dict(
+            eye={"x": eye_coord[0], "y": eye_coord[1], "z": eye_coord[2]},
+            projection=dict(type="perspective"),
+        ),
+        aspectmode="data",
+    )
+)
+basis_opt_fig.write_image(
+    f"{fig_out_dir}/TS{spine_idx}_mel{params['max_edge_length']}_basis_opt.pdf",
+    format="pdf",
+    engine="kaleido",
+    width=600,
+    height=450,
+    scale=pdf_scale,
+)
+basis_opt_fig.show()
+
+# %%
+# Cable fitting: estimate radii on the optimized basis
+swc_out_dir = f"../data/swc/current/{polylines_name}"
+swc_filepath = f"{swc_out_dir}/TS{spine_idx}_mel{params['max_edge_length']}.swc"
+
 if not os.path.exists(swc_out_dir):
     os.makedirs(swc_out_dir)
 
-fitter = CableFitter(options=FitOptions(
-        max_edge_length=params['max_edge_length'],
-        radius_strategy="equivalent_area",
-        section_probe_eps=1e-4,
-        section_probe_tries=3,
-        multi_tangent_reduction="mean",
-        basis_optimizer_options=params['optimizer_options'],
-    ))
-
-morph = fitter.fit(
-    mm.mesh,
-    skeleton,
+fit_options = FitOptions(
+    max_edge_length=params["max_edge_length"],
+    radius_strategy="equivalent_area",
+    section_probe_eps=1e-4,
+    section_probe_tries=3,
+    multi_tangent_reduction="mean",
+    basis_optimizer_options=None,
 )
+morph = optimized_basis.copy()
+_compute_morphology_node_radii(morph, mm.mesh, fit_options)
+
 # write swc to file
 morph.to_swc_file(swc_filepath)
 # validation
@@ -284,6 +329,8 @@ norm_fig.show()
 validator = Validation(mm, skeleton, morph)
 validator.full_validation()
 
+print(swc_filepath)
+
 # %%
 # compare morphology basis to original skeleton
 
@@ -298,7 +345,7 @@ vs_fig: "go.Figure" = plot_model(
     show_axes=False,
     point_set=skel_pointset,
     point_color="red",
-    point_size=model_length * 0.002,
+    point_size=model_length * 0.0015,
 )
 vs_fig.update_layout(
     scene=dict(
@@ -321,7 +368,5 @@ vs_fig.write_image(
     scale=pdf_scale,
 )
 vs_fig.show()
-
-# %%
 
 # %%

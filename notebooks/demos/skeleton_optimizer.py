@@ -48,8 +48,7 @@ optimizer_options = BasisOptimizerOptions(
     do_snapping=True,
     do_forcing=True,
     max_iterations=50,
-    lambda_centering=0.5,
-    lambda_smoothing=0.5,
+    alpha_s=0.5,
     preserve_terminal_nodes=True,
 )
 
@@ -83,34 +82,33 @@ print(
 # ## Example 3: Compare optimizer settings
 
 # %%
-lambda_smoothings = [0.0, 0.3, 0.5, 0.7, 0.9]
+alpha_s_values = [0.0, 0.3, 0.5, 0.7, 0.9]
 results = []
 
-for lambda_smoothing in lambda_smoothings:
+for alpha_s in alpha_s_values:
     test_options = BasisOptimizerOptions(
         do_pruning=False,
         do_snapping=True,
         do_forcing=True,
         max_iterations=50,
-        lambda_centering=0.5,
-        lambda_smoothing=lambda_smoothing,
+        alpha_s=alpha_s,
         preserve_terminal_nodes=True,
     )
     test_optimizer = BasisOptimizer(initial_basis, mesh, test_options)
     test_optimizer.optimize()
     results.append(
         {
-            "lambda_smoothing": lambda_smoothing,
+            "alpha_s": alpha_s,
             "stats": test_optimizer.get_optimization_stats(),
         }
     )
 
-print("Effect of lambda_smoothing on basis optimization:")
-print("\nlambda_smoothing | Nodes Outside Mesh | Total Length")
+print("Effect of alpha_s on basis optimization:")
+print("\n  alpha_s | Nodes Outside Mesh | Total Length")
 print("-" * 55)
 for result in results:
     print(
-        f"      {result['lambda_smoothing']:.1f}        | "
+        f"      {result['alpha_s']:.1f}        | "
         f"        {result['stats']['nodes_outside_mesh']:>2}         | "
         f"   {result['stats']['total_length']:.4f}"
     )

@@ -88,11 +88,11 @@ max_edge_length = max_edge_length_fraction * diagonal
 
 basis_options = BasisOptimizerOptions(
     do_pruning=True,
-    pruning_min_length_fraction=0.1,
+    pruning_length_fraction=0.1,
     do_snapping=True,
     do_forcing=False,
     max_iterations=10,
-    lambda_smoothing=0.1,
+    alpha_s=0.1,
 )
 
 fit_options = FitOptions(
