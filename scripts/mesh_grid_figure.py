@@ -15,17 +15,15 @@ and ``T`` the target basis. Near-spherical clouds skip rotation.
 
 Example::
 
-    uv run python scripts/mesh_grid_figure.py --out figures/demo.png
+    uv run python scripts/mesh_grid_figure.py --out viz/ts_processed_grid.png
 
     import sys
     from pathlib import Path
 
     sys.path.insert(0, str(Path("scripts").resolve()))
-    from mesh_grid_figure import plot_surface_mesh_grid
+    from mesh_grid_figure import plot_ts_processed_meshes_grid
 
-    import trimesh
-    meshes = [trimesh.creation.cylinder(), trimesh.creation.box()]
-    plot_surface_mesh_grid(meshes, grid_shape=(1, 2), out_path="grid.png")
+    plot_ts_processed_meshes_grid(out_path="viz/ts_processed_grid.png")
 """
 
 from __future__ import annotations
@@ -52,7 +50,8 @@ _WORLD_UP = np.array([0.0, 0.0, 1.0])
 # Repo root (parent of ``scripts/``).
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
-_DEFAULT_SIMPLIFIED_MESH_COLOR = "#5d7a99"
+# Matches :meth:`mascaf.mesh.MeshManager.visualize_mesh_3d` default mesh color.
+_DEFAULT_MESH_COLOR = "cyan"
 
 
 def _to_polydata(mesh: MeshLike) -> pv.PolyData:
@@ -217,6 +216,9 @@ def _add_scale_bar_png_bottom_right(
     Bar extent in mesh units is ``bar_length_um / pixels_to_um``. Orthographic
     vertical span per subplot is ``2 * parallel_scale`` mesh units over the
     subplot pixel height.
+
+    Line thickness and label size scale with image height so the bar stays
+    readable at high screenshot resolutions.
     """
     path = Path(path)
     if parallel_scale <= 0 or pixels_to_um <= 0:
@@ -232,9 +234,18 @@ def _add_scale_bar_png_bottom_right(
     bar_px = world_len * cell_h / (2.0 * float(parallel_scale))
     bar_px = max(8.0 * us, bar_px)
 
-    mx = int(margin_x * us)
-    my = int(margin_y * us)
-    lw = max(1, int(round(line_width * us)))
+    # Size stroke / type from the full image so high-res exports stay legible.
+    # ~0.35% of height for the line, ~2.2% for the label (× ui_scale).
+    lw = max(
+        int(round(line_width * us)),
+        int(round(0.0035 * h_act)),
+    )
+    font_px = max(
+        int(round(16 * us)),
+        int(round(0.022 * h_act)),
+    )
+    mx = max(int(margin_x * us), int(round(0.012 * w_act)))
+    my = max(int(margin_y * us), int(round(0.018 * h_act)))
 
     draw = ImageDraw.Draw(img)
     y = h_act - my
@@ -245,7 +256,7 @@ def _add_scale_bar_png_bottom_right(
     label = f"{float(bar_length_um):g} μm"
     font_path = Path(mpl.get_data_path()) / "fonts/ttf/DejaVuSans.ttf"
     try:
-        font = ImageFont.truetype(str(font_path), size=max(10, int(round(16 * us))))
+        font = ImageFont.truetype(str(font_path), size=font_px)
     except OSError:
         font = ImageFont.load_default()
 
@@ -254,9 +265,9 @@ def _add_scale_bar_png_bottom_right(
         tw, th = bx1 - bx0, by1 - by0
     else:
         tw, th = draw.textsize(label, font=font)
-    pad = max(4, int(8 * us))
-    text_x = x2 + pad if x2 + pad + tw <= w_act - 4 else max(4, x1 - tw - pad)
-    text_y = int(y - th / 2 - 2)
+    pad = max(4, int(round(0.006 * h_act)))
+    text_x = max(4, x1 - tw - pad)
+    text_y = int(y - th / 2)
     draw.text((text_x, text_y), label, fill=(0, 0, 0, 255), font=font)
 
     img.save(path)
@@ -453,16 +464,29 @@ def plot_surface_mesh_grid(
     return plotter
 
 
-def plot_simplified_processed_meshes_grid(
+def _ts_mesh_sort_key(path: Path) -> tuple[int, str]:
+    """Sort ``TS12.obj`` by numeric index, then by name."""
+    stem = path.stem
+    if stem.upper().startswith("TS"):
+        suffix = stem[2:]
+        if suffix.isdigit():
+            return (int(suffix), stem.lower())
+    return (10**9, stem.lower())
+
+
+def plot_ts_processed_meshes_grid(
     *,
     processed_dir: str | Path | None = None,
     out_path: str | Path | None = None,
     grid_shape: tuple[int, int] = (3, 3),
     expected_count: int = 9,
+    pattern: str = "TS*.obj",
     **kwargs: Any,
 ) -> pv.Plotter:
     """
-    Plot every ``*_simplified.obj`` file in ``data/mesh/processed`` (sorted by name).
+    Plot ``TS*.obj`` meshes from ``data/mesh/processed`` on a grid (default 3×3).
+
+    Files are ordered by numeric TS index (``TS1``, ``TS2``, … ``TS76``).
 
     Parameters
     ----------
@@ -470,29 +494,37 @@ def plot_simplified_processed_meshes_grid(
         Directory to glob. Default: ``<repo>/data/mesh/processed``.
     out_path
         Image path passed to :func:`plot_surface_mesh_grid`. Default:
-        ``<repo>/figures/processed_simplified_grid.png``.
+        ``<repo>/viz/ts_processed_grid.png``.
     grid_shape
-        Subplot layout; default ``(3, 3)`` for nine meshes.
+        Subplot layout; default ``(3, 3)``.
     expected_count
         If the number of matching files differs, raises ``ValueError``. Set to
         ``-1`` to disable the check.
+    pattern
+        Glob under ``processed_dir`` (default ``TS*.obj``).
     **kwargs
         Forwarded to :func:`plot_surface_mesh_grid` and override built-in defaults:
-        ``mesh_color``, ``zoom``, ``parallel_scale_margin`` (lower ⇒ tighter
-        framing), ``scale_bar_um``, ``pixels_to_um``, ``window_size``,
-        ``screenshot_scale``, etc.
+        ``mesh_color`` (default package ``lightblue``), ``zoom``,
+        ``parallel_scale_margin``, ``scale_bar_um``, ``pixels_to_um``,
+        ``window_size`` (default ``(2400, 2400)``), ``screenshot_scale``
+        (default ``2`` → 4800×4800 output), etc.
 
     Returns
     -------
     pyvista.Plotter
     """
-    root = Path(processed_dir) if processed_dir is not None else _REPO_ROOT / "data" / "mesh" / "processed"
-    paths = sorted(root.glob("*_simplified.obj"))
+    root = (
+        Path(processed_dir)
+        if processed_dir is not None
+        else _REPO_ROOT / "data" / "mesh" / "processed"
+    )
+    paths = sorted(root.glob(pattern), key=_ts_mesh_sort_key)
     n = len(paths)
     if expected_count >= 0 and n != expected_count:
         names = ", ".join(p.name for p in paths) or "(none)"
         raise ValueError(
-            f"Expected {expected_count} *_simplified.obj files in {root}, found {n}: {names}"
+            f"Expected {expected_count} files matching {pattern!r} in {root}, "
+            f"found {n}: {names}"
         )
     capacity = int(grid_shape[0]) * int(grid_shape[1])
     if n > capacity:
@@ -501,15 +533,17 @@ def plot_simplified_processed_meshes_grid(
         )
 
     if out_path is None:
-        out_path = _REPO_ROOT / "figures" / "processed_simplified_grid.png"
+        out_path = _REPO_ROOT / "viz" / "ts_processed_grid.png"
 
     defaults: dict[str, Any] = {
-        "mesh_color": _DEFAULT_SIMPLIFIED_MESH_COLOR,
+        "mesh_color": _DEFAULT_MESH_COLOR,
         "zoom": 1.0,
         "parallel_scale_margin": 1.02,
         "scale_bar_um": 5.0,
         "pixels_to_um": 5.0 / 1000.0,
-        "window_size": (800, 800),
+        # Base 2400²; with default screenshot_scale=2 → 4800×4800 PNG.
+        "window_size": (2400, 2400),
+        "screenshot_scale": 2,
     }
     merged: dict[str, Any] = {**defaults, **kwargs}
 
@@ -521,22 +555,51 @@ def plot_simplified_processed_meshes_grid(
     )
 
 
+def plot_simplified_processed_meshes_grid(
+    *,
+    processed_dir: str | Path | None = None,
+    out_path: str | Path | None = None,
+    grid_shape: tuple[int, int] = (3, 3),
+    expected_count: int = 9,
+    **kwargs: Any,
+) -> pv.Plotter:
+    """
+    Alias for :func:`plot_ts_processed_meshes_grid` (``TS*.obj`` in processed/).
+
+    Kept for older call sites; prefer :func:`plot_ts_processed_meshes_grid`.
+    """
+    return plot_ts_processed_meshes_grid(
+        processed_dir=processed_dir,
+        out_path=out_path,
+        grid_shape=grid_shape,
+        expected_count=expected_count,
+        **kwargs,
+    )
+
+
 def _cli() -> None:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument(
-        "--simplified",
-        action="store_true",
-        help="Plot all *_simplified.obj in data/mesh/processed (3×3, nine files).",
-    )
     p.add_argument(
         "--meshes",
         nargs="*",
         default=None,
-        help="Mesh file paths (OBJ, PLY, etc.). Default: built-in trimesh primitives.",
+        help=(
+            "Mesh file paths (OBJ, PLY, etc.). If omitted, plot all TS*.obj "
+            "files from data/mesh/processed on a 3×3 grid."
+        ),
     )
-    p.add_argument("--rows", type=int, default=2)
+    p.add_argument(
+        "--demo-primitives",
+        action="store_true",
+        help="Ignore processed meshes and plot built-in trimesh primitives.",
+    )
+    p.add_argument("--rows", type=int, default=3)
     p.add_argument("--cols", type=int, default=3)
-    p.add_argument("--out", default="mesh_grid.png", help="Output image path")
+    p.add_argument(
+        "--out",
+        default="viz/ts_processed_grid.png",
+        help="Output image path",
+    )
     p.add_argument(
         "--screenshot-scale",
         type=int,
@@ -549,24 +612,15 @@ def _cli() -> None:
     p.add_argument("--no-rotate", action="store_true")
     args = p.parse_args()
 
-    if args.simplified:
-        out = args.out if args.out != "mesh_grid.png" else None
-        plot_simplified_processed_meshes_grid(
-            out_path=None if args.show else out,
-            grid_shape=(3, 3),
-            show=args.show,
-            center_each=not args.no_center,
-            auto_rotate_each=not args.no_rotate,
-            screenshot_scale=args.screenshot_scale,
-        )
-        if not args.show:
-            written = out or (_REPO_ROOT / "figures" / "processed_simplified_grid.png")
-            print(f"Wrote {written}")
-        return
+    common = dict(
+        show=args.show,
+        center_each=not args.no_center,
+        auto_rotate_each=not args.no_rotate,
+    )
+    if args.screenshot_scale is not None:
+        common["screenshot_scale"] = args.screenshot_scale
 
-    if args.meshes:
-        mesh_list = args.meshes
-    else:
+    if args.demo_primitives:
         mesh_list = [
             trimesh.creation.cylinder(radius=0.25, height=1.2, sections=32),
             trimesh.creation.box([0.6, 0.45, 0.9]),
@@ -575,18 +629,38 @@ def _cli() -> None:
             trimesh.creation.torus(major_radius=0.55, minor_radius=0.18),
             trimesh.creation.capsule(height=0.9, radius=0.22, count=[12, 12]),
         ]
+        plot_surface_mesh_grid(
+            mesh_list,
+            grid_shape=(args.rows, args.cols),
+            out_path=None if args.show else args.out,
+            mesh_color=_DEFAULT_MESH_COLOR,
+            **common,
+        )
+        if not args.show:
+            print(f"Wrote {args.out}")
+        return
 
-    plot_surface_mesh_grid(
-        mesh_list,
+    if args.meshes:
+        plot_surface_mesh_grid(
+            args.meshes,
+            grid_shape=(args.rows, args.cols),
+            out_path=None if args.show else args.out,
+            mesh_color=_DEFAULT_MESH_COLOR,
+            **common,
+        )
+        if not args.show:
+            print(f"Wrote {args.out}")
+        return
+
+    out = None if args.show else args.out
+    plot_ts_processed_meshes_grid(
+        out_path=out,
         grid_shape=(args.rows, args.cols),
-        out_path=None if args.show else args.out,
-        show=args.show,
-        center_each=not args.no_center,
-        auto_rotate_each=not args.no_rotate,
-        screenshot_scale=args.screenshot_scale,
+        **common,
     )
     if not args.show:
-        print(f"Wrote {args.out}")
+        written = out or (_REPO_ROOT / "viz" / "ts_processed_grid.png")
+        print(f"Wrote {written}")
 
 
 if __name__ == "__main__":
