@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import pytest
 import trimesh
@@ -36,9 +38,16 @@ def test_options_new_force_defaults():
     assert opts.localization_beta == 2.0
     assert opts.weight_epsilon == 1e-6
     assert opts.step_cap_factor == 0.5
-    assert opts.alpha_s == 0.2
-    assert opts.step_scale == 1.0
+    assert opts.alpha_s == 0.1
+    assert opts.step_scale == 0.5
+    assert opts.ray_jitter == 0.0
+    assert opts.active_resample is False
+    assert opts.active_resample_min_fraction is None
+    assert opts.active_resample_max_fraction is None
+    assert opts.active_resample_allow_cycle_collapse is False
     assert opts.pruning_length is None
+    assert not hasattr(opts, "do_consolidation")
+    assert not hasattr(opts, "consolidation_length_fraction")
     assert opts.pruning_length_fraction is None
     assert not hasattr(opts, "lambda_centering")
     assert not hasattr(opts, "lambda_smoothing")
@@ -66,6 +75,36 @@ def test_centering_force_near_zero_at_sphere_center(unit_sphere):
     opt = BasisOptimizer(graph, unit_sphere, BasisOptimizerOptions(n_rays=6))
     force = opt._compute_centering_force(np.array([0.0, 0.0, 0.0]))
     assert np.linalg.norm(force) < 0.05
+
+
+def test_ray_jitter_perturbs_directions_independently():
+    graph = _chain_graph([np.array([0.0, 0.0, 0.0])])
+    opt = BasisOptimizer(
+        graph,
+        trimesh.creation.icosphere(subdivisions=2),
+        BasisOptimizerOptions(n_rays=6, ray_jitter=0.2),
+    )
+    base = opt._get_uniform_sphere_directions(6)
+    rng = np.random.default_rng(0)
+    jittered = opt._apply_angular_ray_jitter(base, 0.2, rng)
+    assert jittered.shape == base.shape
+    # Each direction remains unit length and differs from the base set.
+    for b, j in zip(base, jittered):
+        assert np.linalg.norm(j) == pytest.approx(1.0, abs=1e-9)
+        assert not np.allclose(b, j, atol=1e-6)
+    # Zero jitter is a no-op.
+    same = opt._forcing_ray_directions(np.random.default_rng(1))
+    # With ray_jitter=0.2, forcing_ray_directions should differ from base.
+    opt_off = BasisOptimizer(
+        graph,
+        trimesh.creation.icosphere(subdivisions=2),
+        BasisOptimizerOptions(n_rays=6, ray_jitter=0.0),
+    )
+    np.testing.assert_allclose(
+        opt_off._forcing_ray_directions(np.random.default_rng(0)),
+        base,
+    )
+    assert not np.allclose(same, base)
 
 
 def test_centering_force_pushes_off_center_point_inward(unit_sphere):
@@ -305,7 +344,7 @@ def test_forcing_raises_when_uncapped_step_exits_mesh(unit_sphere, monkeypatch):
     monkeypatch.setattr(
         opt,
         "_compute_centering_force",
-        lambda point: np.array([1.0, 0.0, 0.0]),
+        lambda point, directions=None: np.array([1.0, 0.0, 0.0]),
     )
     with pytest.raises(RuntimeError, match="outside the mesh") as exc_info:
         opt._run_forcing_phase()
@@ -350,7 +389,7 @@ def test_forcing_stops_when_centering_error_below_fraction(unit_sphere, monkeypa
     opt = BasisOptimizer(graph, unit_sphere, opts)
     call_count = {"n": 0}
 
-    def _scripted_force(point):
+    def _scripted_force(point, directions=None):
         call_count["n"] += 1
         # One free node per iteration → E equals this magnitude.
         # Iter 0: E0=1.0; later: E=0.05 < 0.1*E0 → stop on iter 1.
@@ -389,7 +428,7 @@ def test_forcing_stops_on_centering_error_plateau(unit_sphere, monkeypatch):
     opt = BasisOptimizer(graph, unit_sphere, opts)
     call_count = {"n": 0}
 
-    def _flat_force(point):
+    def _flat_force(point, directions=None):
         call_count["n"] += 1
         return np.array([1.0, 0.0, 0.0])
 
@@ -627,3 +666,327 @@ def test_pruning_leaves_tip_to_tip_chain(unit_sphere):
     )
     optimized = BasisOptimizer(graph, unit_sphere, opts).optimize()
     assert optimized.number_of_nodes() == 3
+
+
+def test_consolidate_nodes_degree_formula_and_midpoint():
+    """deg-m and deg-n merge to deg (m+n-2) when there are no shared neighbors."""
+    g = MorphologyGraph()
+    # Branch of degree 3 at 0, branch of degree 3 at 1, connected by 0-1.
+    # Neighbors of 0: 1,2,3  -> deg 3
+    # Neighbors of 1: 0,4,5  -> deg 3
+    # After merge keep=0: neighbors 2,3,4,5 -> deg 4 = 3+3-2
+    positions = {
+        0: np.array([0.0, 0.0, 0.0]),
+        1: np.array([2.0, 0.0, 0.0]),
+        2: np.array([-1.0, 1.0, 0.0]),
+        3: np.array([-1.0, -1.0, 0.0]),
+        4: np.array([3.0, 1.0, 0.0]),
+        5: np.array([3.0, -1.0, 0.0]),
+    }
+    for nid, xyz in positions.items():
+        g.add_node(nid, xyz=xyz, radius=0.1 if nid % 2 == 0 else 0.3)
+    for u, v in [(0, 1), (0, 2), (0, 3), (1, 4), (1, 5)]:
+        g.add_edge(u, v)
+
+    assert g.degree(0) == 3
+    assert g.degree(1) == 3
+    keep = g.consolidate_nodes(0, 1)
+    assert keep == 0
+    assert 1 not in g
+    assert g.degree(0) == 3 + 3 - 2
+    np.testing.assert_allclose(g.get_node_position(0), [1.0, 0.0, 0.0])
+    assert g.nodes[0]["radius"] == pytest.approx(0.2)
+    assert set(g.neighbors(0)) == {2, 3, 4, 5}
+
+
+def test_consolidate_nodes_shared_neighbor_no_multiedge():
+    g = MorphologyGraph()
+    for nid, xyz in {
+        0: np.array([0.0, 0.0, 0.0]),
+        1: np.array([1.0, 0.0, 0.0]),
+        2: np.array([0.5, 1.0, 0.0]),
+    }.items():
+        g.add_node(nid, xyz=xyz, radius=0.05)
+    g.add_edge(0, 1)
+    g.add_edge(0, 2)
+    g.add_edge(1, 2)
+    keep = g.consolidate_nodes(0, 1)
+    assert keep == 0
+    assert g.degree(0) == 1
+    assert set(g.neighbors(0)) == {2}
+
+
+def test_bisect_edge_inserts_midpoint_degree_2():
+    g = MorphologyGraph()
+    g.add_node(0, xyz=np.array([0.0, 0.0, 0.0]), radius=0.1)
+    g.add_node(1, xyz=np.array([2.0, 0.0, 0.0]), radius=0.3)
+    g.add_edge(0, 1)
+    mid = g.bisect_edge(0, 1)
+    assert mid == 2
+    assert g.degree(mid) == 2
+    assert not g.has_edge(0, 1)
+    assert g.has_edge(0, mid) and g.has_edge(mid, 1)
+    np.testing.assert_allclose(g.get_node_position(mid), [1.0, 0.0, 0.0])
+    assert g.nodes[mid]["radius"] == pytest.approx(0.2)
+
+
+def test_forcing_active_resample_merges_short_edge(unit_sphere):
+    """With active_resample on, a tiny edge is merged after a forcing iteration."""
+    graph = _chain_graph(
+        [
+            np.array([-0.2, 0.0, 0.0]),
+            np.array([-0.199, 0.0, 0.0]),  # ~0.001 apart
+            np.array([0.2, 0.0, 0.0]),
+        ]
+    )
+    diagonal = float(np.linalg.norm(np.asarray(unit_sphere.extents, dtype=float)))
+    min_frac = 0.01
+    max_frac = 1.0  # high max so only the short edge merges, no split after
+    assert min_frac * diagonal > 0.001
+
+    opts = BasisOptimizerOptions(
+        do_pruning=False,
+        do_snapping=False,
+        do_forcing=True,
+        active_resample=True,
+        active_resample_min_fraction=min_frac,
+        active_resample_max_fraction=max_frac,
+        max_iterations=1,
+        preserve_terminal_nodes=False,
+        preserve_branch_nodes=False,
+        alpha_s=0.0,
+        step_scale=0.0,
+        n_rays=6,
+    )
+    result = BasisOptimizer(graph, unit_sphere, opts).optimize()
+    assert result.number_of_nodes() == 2
+    assert result.number_of_edges() == 1
+    assert 0 in result and 1 not in result and 2 in result
+    assert result.has_edge(0, 2)
+
+
+def test_forcing_active_resample_splits_long_edge(unit_sphere):
+    """Edges longer than max fraction are bisected during active resample."""
+    graph = _chain_graph(
+        [
+            np.array([-0.4, 0.0, 0.0]),
+            np.array([0.4, 0.0, 0.0]),  # length 0.8
+        ]
+    )
+    diagonal = float(np.linalg.norm(np.asarray(unit_sphere.extents, dtype=float)))
+    # max ~ 0.2 on unit sphere diagonal ~ 2√3 ≈ 3.46 → fraction 0.05 → ~0.17
+    min_frac = 0.02
+    max_frac = 0.05
+    assert 0.8 > max_frac * diagonal
+
+    opts = BasisOptimizerOptions(
+        do_pruning=False,
+        do_snapping=False,
+        do_forcing=True,
+        active_resample=True,
+        active_resample_min_fraction=min_frac,
+        active_resample_max_fraction=max_frac,
+        max_iterations=1,
+        preserve_terminal_nodes=True,  # tips stay put; still allow bisect
+        preserve_branch_nodes=False,
+        alpha_s=0.0,
+        step_scale=0.0,  # no movement; resample alone
+        n_rays=6,
+    )
+    # step_scale=0 still runs force loop; nodes don't move
+    result = BasisOptimizer(graph, unit_sphere, opts).optimize()
+    assert result.number_of_nodes() > 2
+    assert result.number_of_edges() == result.number_of_nodes() - 1
+    for u, v in result.edges():
+        length = float(
+            np.linalg.norm(result.get_node_position(v) - result.get_node_position(u))
+        )
+        assert length <= max_frac * diagonal + 1e-9
+        assert length >= min_frac * diagonal - 1e-9
+
+
+def test_active_resample_requires_fractions(unit_sphere):
+    graph = _chain_graph([np.array([0.0, 0.0, 0.0])])
+    opts = BasisOptimizerOptions(
+        do_pruning=False,
+        do_snapping=False,
+        do_forcing=True,
+        active_resample=True,
+        active_resample_min_fraction=None,
+        active_resample_max_fraction=0.1,
+        max_iterations=1,
+    )
+    with pytest.raises(ValueError, match="active_resample_min_fraction"):
+        BasisOptimizer(graph, unit_sphere, opts).optimize()
+
+
+def test_active_resample_rejects_max_below_twice_min(unit_sphere):
+    graph = _chain_graph([np.array([0.0, 0.0, 0.0])])
+    opts = BasisOptimizerOptions(
+        do_pruning=False,
+        do_snapping=False,
+        do_forcing=True,
+        active_resample=True,
+        active_resample_min_fraction=0.05,
+        active_resample_max_fraction=0.09,
+        max_iterations=1,
+    )
+    with pytest.raises(ValueError, match="2 \\*"):
+        BasisOptimizer(graph, unit_sphere, opts).optimize()
+
+
+def test_active_resample_snaps_outside_bisect_midpoint(unit_sphere, monkeypatch):
+    """Bisect midpoints that land outside are chord-snapped before continuing."""
+    graph = _chain_graph(
+        [
+            np.array([-0.4, 0.0, 0.0]),
+            np.array([0.4, 0.0, 0.0]),
+        ]
+    )
+    opts = BasisOptimizerOptions(
+        do_pruning=False,
+        do_snapping=False,
+        do_forcing=False,
+        active_resample=True,
+        active_resample_min_fraction=0.02,
+        active_resample_max_fraction=0.05,
+    )
+    opt = BasisOptimizer(graph, unit_sphere, opts)
+    snap_calls: list[np.ndarray] = []
+    snap_target = np.array([0.1, 0.0, 0.0], dtype=float)
+
+    def is_outside(point: np.ndarray) -> bool:
+        # Geometric midpoints near the origin count as outside; snap target inside.
+        if np.allclose(point, snap_target):
+            return False
+        return float(np.linalg.norm(point)) < 0.05
+
+    def fake_snap(point: np.ndarray) -> np.ndarray:
+        snap_calls.append(np.asarray(point, dtype=float).copy())
+        return snap_target.copy()
+
+    monkeypatch.setattr(opt, "_is_clearly_outside", is_outside)
+    monkeypatch.setattr(opt, "_snap_point_to_chord_midpoint", fake_snap)
+
+    n_merged, n_split = opt._active_resample_edges()
+    assert n_split >= 1
+    assert snap_calls, "expected snap of an outside bisect midpoint"
+    positions = [opt.graph.get_node_position(n) for n in opt.graph.nodes()]
+    assert any(np.allclose(p, snap_target) for p in positions)
+
+
+def test_consolidation_changes_cycle_count_triangle():
+    g = MorphologyGraph()
+    for i, xyz in enumerate(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.5, 0.866, 0.0],
+        ]
+    ):
+        g.add_node(i, xyz=np.array(xyz), radius=0.05)
+    g.add_edge(0, 1)
+    g.add_edge(1, 2)
+    g.add_edge(2, 0)
+    assert g.cyclomatic_number() == 1
+    assert g.consolidation_changes_cycle_count(0, 1)
+    assert g.consolidation_changes_cycle_count(1, 2)
+    assert g.consolidation_changes_cycle_count(2, 0)
+
+
+def test_consolidation_preserves_cycle_count_on_four_cycle():
+    g = MorphologyGraph()
+    for i, xyz in enumerate(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ):
+        g.add_node(i, xyz=np.array(xyz), radius=0.05)
+    for u, v in [(0, 1), (1, 2), (2, 3), (3, 0)]:
+        g.add_edge(u, v)
+    assert g.cyclomatic_number() == 1
+    assert not g.consolidation_changes_cycle_count(0, 1)
+
+
+def test_active_resample_skips_cycle_collapsing_merge(unit_sphere, caplog):
+    """Short edge on a triangle must not merge when cycle collapse is disallowed."""
+    g = MorphologyGraph()
+    positions = [
+        np.array([0.0, 0.0, 0.0]),
+        np.array([0.001, 0.0, 0.0]),
+        np.array([0.0005, 0.001, 0.0]),
+    ]
+    for i, pos in enumerate(positions):
+        g.add_node(i, xyz=pos, radius=0.05)
+    g.add_edge(0, 1)
+    g.add_edge(1, 2)
+    g.add_edge(2, 0)
+
+    opts = BasisOptimizerOptions(
+        do_pruning=False,
+        do_snapping=False,
+        do_forcing=False,
+        active_resample=True,
+        active_resample_min_fraction=0.05,
+        active_resample_max_fraction=1.0,
+        active_resample_allow_cycle_collapse=False,
+    )
+    opt = BasisOptimizer(g, unit_sphere, opts)
+    with caplog.at_level(logging.WARNING):
+        n_merged, n_split = opt._active_resample_edges()
+    assert n_merged == 0
+    assert opt.graph.number_of_nodes() == 3
+    assert any("Skipping active resample consolidation" in r.message for r in caplog.records)
+
+
+def test_active_resample_allows_cycle_collapsing_merge(unit_sphere):
+    g = MorphologyGraph()
+    positions = [
+        np.array([0.0, 0.0, 0.0]),
+        np.array([0.001, 0.0, 0.0]),
+        np.array([0.0005, 0.001, 0.0]),
+    ]
+    for i, pos in enumerate(positions):
+        g.add_node(i, xyz=pos, radius=0.05)
+    g.add_edge(0, 1)
+    g.add_edge(1, 2)
+    g.add_edge(2, 0)
+
+    opts = BasisOptimizerOptions(
+        do_pruning=False,
+        do_snapping=False,
+        do_forcing=False,
+        active_resample=True,
+        active_resample_min_fraction=0.05,
+        active_resample_max_fraction=1.0,
+        active_resample_allow_cycle_collapse=True,
+    )
+    opt = BasisOptimizer(g, unit_sphere, opts)
+    n_merged, _ = opt._active_resample_edges()
+    assert n_merged >= 1
+    assert opt.graph.cyclomatic_number() == 0
+
+
+def test_active_resample_raises_if_snap_fails(unit_sphere, monkeypatch):
+    graph = _chain_graph(
+        [
+            np.array([-0.4, 0.0, 0.0]),
+            np.array([0.4, 0.0, 0.0]),
+        ]
+    )
+    opts = BasisOptimizerOptions(
+        do_pruning=False,
+        do_snapping=False,
+        do_forcing=False,
+        active_resample=True,
+        active_resample_min_fraction=0.02,
+        active_resample_max_fraction=0.05,
+    )
+    opt = BasisOptimizer(graph, unit_sphere, opts)
+    monkeypatch.setattr(opt, "_is_clearly_outside", lambda _p: True)
+    monkeypatch.setattr(opt, "_snap_point_to_chord_midpoint", lambda _p: None)
+    with pytest.raises(RuntimeError, match="snapping failed"):
+        opt._active_resample_edges()

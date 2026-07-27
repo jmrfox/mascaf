@@ -33,7 +33,16 @@ class BasisOptimizerOptions:
 
     where ``F_centering`` is scaled by ``d_min`` and ``F_smoothing`` is the
     raw neighbor-centroid pull. The update multiplies by ``step_scale``, then
-    caps by ``step_cap_factor`` times surface distance along the step.
+    caps by ``step_cap_factor`` times surface distance along the step. Optional
+    ``ray_jitter`` (default ``0``) randomly perturbs each centering-ray
+    direction once per forcing iteration. Optional ``active_resample`` keeps
+    edge lengths between ``active_resample_min_fraction`` and
+    ``active_resample_max_fraction`` times the mesh bounding-box diagonal
+    (consolidate short edges; bisect long edges) after each forcing iteration.
+    Midpoints that fall outside the mesh are snapped inside. By default,
+    consolidation that would change the graph cyclomatic number (cycle count)
+    is skipped with a warning; set ``active_resample_allow_cycle_collapse``
+    to allow such merges.
 
     Early stopping (any criterion may halt; all are active by default):
 
@@ -52,14 +61,15 @@ class BasisOptimizerOptions:
     pruning_length_fraction: Optional[float] = None
     pruning_iterative: bool = True
     do_snapping: bool = True
-    do_forcing: bool = True
-    max_iterations: int = 100
+    do_forcing: bool = False
+    max_iterations: int = 10
     convergence_threshold: float = 1e-4
     preserve_terminal_nodes: bool = True
     preserve_branch_nodes: bool = False
     n_rays: int = 6
-    alpha_s: float = 0.2
-    step_scale: float = 1.0
+    ray_jitter: float = 0.0
+    alpha_s: float = 0.1
+    step_scale: float = 0.5
     repulsion_power: float = 1.0
     localization_beta: float = 2.0
     weight_epsilon: float = 1e-6
@@ -75,7 +85,10 @@ class BasisOptimizerOptions:
     snap_chord_fraction: float = 0.25
     snap_min_chord_length: Optional[float] = None
     snap_min_chord_fraction: float = 5e-4
-    verbose: bool = False
+    active_resample: bool = False
+    active_resample_min_fraction: Optional[float] = None
+    active_resample_max_fraction: Optional[float] = None
+    active_resample_allow_cycle_collapse: bool = False
 
 
 class BasisOptimizer:
@@ -89,6 +102,8 @@ class BasisOptimizer:
     3. **Forcing** — iteratively pull nodes toward the medial axis using a
        weighted localized centering force with optional neighbor smoothing,
        with steps scaled by ``step_scale`` then capped by surface distance.
+       Optional ``active_resample`` may merge short / split long edges after
+       each iteration.
 
     Parameters
     ----------
@@ -118,14 +133,16 @@ class BasisOptimizer:
         self.mesh = mesh
         self.options = options or BasisOptimizerOptions()
 
+        logger.debug("BasisOptimizer options: %s", self.options)
         logger.debug(
             "Initialized BasisOptimizer with %d nodes, %d edges, do_pruning=%s, "
-            "do_snapping=%s, do_forcing=%s",
+            "do_snapping=%s, do_forcing=%s, active_resample=%s",
             self.graph.number_of_nodes(),
             self.graph.number_of_edges(),
             self.options.do_pruning,
             self.options.do_snapping,
             self.options.do_forcing,
+            self.options.active_resample,
         )
 
     def optimize(self) -> MorphologyGraph:
@@ -140,7 +157,12 @@ class BasisOptimizer:
             The optimized morphology basis (a modified copy of the input).
         """
         logger.info("Starting basis optimization...")
-        logger.info("  Nodes: %d", self.graph.number_of_nodes())
+        logger.info(
+            "  Input: %d nodes, %d edges, total length %.4f",
+            self.graph.number_of_nodes(),
+            self.graph.number_of_edges(),
+            self.graph.get_total_length(),
+        )
 
         if self.options.do_pruning:
             self._run_pruning_phase()
@@ -158,7 +180,16 @@ class BasisOptimizer:
             logger.debug("Skipping forcing phase because do_forcing is False")
 
         self._update_edge_lengths()
-        logger.info("Basis optimization complete")
+        stats = self.get_optimization_stats()
+        logger.info(
+            "Basis optimization complete: %d nodes, %d edges, "
+            "%d outside, total length %.4f",
+            stats["num_nodes"],
+            stats["num_edges"],
+            stats["nodes_outside_mesh"],
+            stats["total_length"],
+        )
+        logger.debug("Optimization stats: %s", stats)
         return self.graph
 
     def _run_pruning_phase(self) -> None:
@@ -178,8 +209,16 @@ class BasisOptimizer:
             logger.debug("Skipping pruning because no pruning threshold was configured")
             return
 
+        stub_lengths = self._terminal_stub_lengths(self.graph)
+        logger.debug(
+            "Pruning threshold=%.6f (%d terminal→branch stubs, longest=%.6f)",
+            threshold,
+            len(stub_lengths),
+            max(stub_lengths) if stub_lengths else 0.0,
+        )
         logger.info("  Removing terminal stubs with length < %.4f", threshold)
         current = self.graph.copy()
+        prune_round = 0
         while True:
             terminal_nodes = sorted(current.get_terminal_nodes())
             nodes_to_remove: set[int] = set()
@@ -198,19 +237,35 @@ class BasisOptimizer:
                 if not (ends_at_branch and length < threshold):
                     continue
 
+                logger.debug(
+                    "  prune round %d: terminal=%d branch=%d length=%.6f path=%s",
+                    prune_round,
+                    terminal,
+                    end,
+                    length,
+                    path,
+                )
                 nodes_to_remove.update(path[:-1])
 
             if not nodes_to_remove:
                 break
 
             logger.debug(
-                "Pruning %d nodes from short terminal stubs",
+                "Pruning round %d: removing %d nodes",
+                prune_round,
                 len(nodes_to_remove),
             )
+            prune_round += 1
             current.remove_nodes_from([n for n in nodes_to_remove if n in current])
             if not self.options.pruning_iterative:
                 break
 
+        logger.info(
+            "  Pruning done: %d → %d nodes (%d rounds)",
+            self.graph.number_of_nodes(),
+            current.number_of_nodes(),
+            prune_round,
+        )
         self.graph = current
 
     def _resolve_pruning_threshold(self) -> Optional[float]:
@@ -261,22 +316,22 @@ class BasisOptimizer:
             return
 
         for node in outside_node_ids:
-            pos = self.graph.get_node_position(node)
-            new_pos = self._snap_point_to_chord_midpoint(pos)
-            if new_pos is None:
+            pos_before = self.graph.get_node_position(node)
+            if not self._snap_node_inside(node):
                 logger.warning(
                     "Failed to snap node %s at %s; leaving position unchanged",
                     node,
-                    pos,
+                    self.graph.get_node_position(node),
                 )
-                continue
-            logger.debug(
-                "Snapping node %s from %s to chord point %s",
-                node,
-                pos,
-                new_pos,
-            )
-            self.graph.set_node_position(node, new_pos)
+            else:
+                pos_after = self.graph.get_node_position(node)
+                logger.debug(
+                    "Snapped node %s: %s → %s (displacement %.6f)",
+                    node,
+                    pos_before,
+                    pos_after,
+                    float(np.linalg.norm(pos_after - pos_before)),
+                )
 
         still_outside = self.graph.get_outside_nodes(
             self.mesh,
@@ -300,6 +355,10 @@ class BasisOptimizer:
 
         then applies ``step_scale * delta_v`` and caps by ``step_cap_factor``
         times the surface distance along that direction.
+
+        When ``ray_jitter > 0``, each forcing iteration independently perturbs
+        every centering-ray direction by a random angular displacement of that
+        magnitude (shared across nodes within the iteration).
 
         Requires every node to be inside the mesh; raises ``RuntimeError`` if
         any node is clearly outside before forcing or after a step (see
@@ -333,22 +392,44 @@ class BasisOptimizer:
             else set()
         )
         protected = terminal_nodes | branch_nodes
+        logger.debug(
+            "Forcing protected nodes: %d terminals, %d branches (total %d)",
+            len(terminal_nodes),
+            len(branch_nodes),
+            len(protected),
+        )
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug("  terminal ids: %s", sorted(terminal_nodes))
+            logger.debug("  branch ids: %s", sorted(branch_nodes))
         alpha_s = float(self.options.alpha_s)
         step_scale = float(self.options.step_scale)
+        ray_jitter = float(self.options.ray_jitter)
         stop_fraction = float(self.options.centering_error_stop_fraction)
         plateau_tol = float(self.options.centering_error_plateau_tol)
         plateau_patience = max(1, int(self.options.centering_error_plateau_patience))
         increase_patience = max(1, int(self.options.centering_error_increase_patience))
         logger.info(
-            "  Forcing alpha_s=%.4f step_scale=%.4f",
+            "  Forcing alpha_s=%.4f step_scale=%.4f ray_jitter=%.4f "
+            "active_resample=%s",
             alpha_s,
             step_scale,
+            ray_jitter,
+            self.options.active_resample,
         )
+        if self.options.active_resample:
+            min_len, max_len = self._active_resample_length_bounds()
+            logger.info(
+                "  Active resample edge lengths in [%.6e, %.6e] "
+                "(fractions of bbox diagonal)",
+                min_len,
+                max_len,
+            )
 
         e0: Optional[float] = None
         e_prev: Optional[float] = None
         plateau_streak = 0
         increase_streak = 0
+        rng = np.random.default_rng()
 
         for iteration in range(self.options.max_iterations):
             old_positions = self.graph.get_all_positions()
@@ -356,13 +437,17 @@ class BasisOptimizer:
                 logger.info("Phase 2 - Forcing skipped because basis graph is empty")
                 break
 
+            ray_directions = self._forcing_ray_directions(rng)
+
             centering_error = 0.0
-            for node in self.graph.nodes():
-                if node in protected:
+            for node in list(self.graph.nodes()):
+                if node not in self.graph or node in protected:
                     continue
 
                 pos = self.graph.get_node_position(node)
-                f_centering = self._compute_centering_force(pos)
+                f_centering = self._compute_centering_force(
+                    pos, directions=ray_directions
+                )
                 f_c_norm = float(np.linalg.norm(f_centering))
                 centering_error += f_c_norm
                 f_smoothing = self._compute_smoothing_force_for_node(node)
@@ -390,11 +475,47 @@ class BasisOptimizer:
                     logger.error(detail)
                     raise RuntimeError(detail)
                 self.graph.set_node_position(node, new_pos)
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(
+                        "  iter=%d node=%d pos=%s → %s step=%s "
+                        "||step||=%.6e ||F_c||=%.6e ||F_s||=%.6e",
+                        iteration,
+                        node,
+                        np.array2string(pos, precision=4, suppress_small=True),
+                        np.array2string(new_pos, precision=4, suppress_small=True),
+                        np.array2string(step, precision=4, suppress_small=True),
+                        float(np.linalg.norm(step)),
+                        f_c_norm,
+                        f_s_norm,
+                    )
 
             movement = self._average_movement(
                 old_positions,
                 self.graph.get_all_positions(),
             )
+
+            if self.options.active_resample:
+                n_merged, n_split = self._active_resample_edges()
+                if n_merged or n_split:
+                    logger.info(
+                        "  Iteration %d: active resample "
+                        "merged=%d split=%d",
+                        iteration,
+                        n_merged,
+                        n_split,
+                    )
+                    terminal_nodes = (
+                        self.graph.get_terminal_nodes()
+                        if self.options.preserve_terminal_nodes
+                        else set()
+                    )
+                    branch_nodes = (
+                        self.graph.get_branch_nodes()
+                        if self.options.preserve_branch_nodes
+                        else set()
+                    )
+                    protected = terminal_nodes | branch_nodes
+
             logger.info(
                 "  Iteration %d: avg movement = %.6f, centering_error = %.6e",
                 iteration,
@@ -472,6 +593,202 @@ class BasisOptimizer:
             pos_v = self.graph.get_node_position(v)
             self.graph.edges[u, v]["length"] = float(np.linalg.norm(pos_v - pos_u))
 
+    def _mesh_bbox_diagonal(self) -> float:
+        """Return the mesh axis-aligned bounding-box space diagonal."""
+        extents = np.asarray(self.mesh.extents, dtype=float)
+        return float(np.linalg.norm(extents))
+
+    def _active_resample_length_bounds(self) -> Tuple[float, float]:
+        """Absolute ``(min_length, max_length)`` for active edge resampling.
+
+        Requires ``active_resample_min_fraction`` and
+        ``active_resample_max_fraction`` in ``(0, 1]`` with
+        ``max_fraction >= 2 * min_fraction`` so bisecting an edge just above
+        the max cannot produce halves below the min (avoids merge/split
+        oscillation).
+        """
+        min_frac = self.options.active_resample_min_fraction
+        max_frac = self.options.active_resample_max_fraction
+        if min_frac is None or max_frac is None:
+            raise ValueError(
+                "active_resample requires both active_resample_min_fraction "
+                "and active_resample_max_fraction (fractions of the mesh "
+                "bounding-box diagonal)"
+            )
+        min_frac = float(min_frac)
+        max_frac = float(max_frac)
+        if not (0.0 < min_frac <= 1.0):
+            raise ValueError(
+                f"active_resample_min_fraction must be in (0, 1], got {min_frac}"
+            )
+        if not (0.0 < max_frac <= 1.0):
+            raise ValueError(
+                f"active_resample_max_fraction must be in (0, 1], got {max_frac}"
+            )
+        if max_frac < 2.0 * min_frac:
+            raise ValueError(
+                "active_resample_max_fraction must be >= 2 * "
+                f"active_resample_min_fraction (got max={max_frac}, "
+                f"min={min_frac}); otherwise bisecting a long edge can "
+                "create edges shorter than the merge threshold"
+            )
+        diagonal = self._mesh_bbox_diagonal()
+        return min_frac * diagonal, max_frac * diagonal
+
+    def _active_resample_edges(self) -> Tuple[int, int]:
+        """Merge short edges and bisect long edges toward the length band.
+
+        Alternates consolidate-shortest / bisect-longest until all edges lie
+        in ``[min_length, max_length]`` (or a safety iteration cap is hit).
+
+        Returns
+        -------
+        tuple of int
+            ``(n_merged, n_split)``.
+        """
+        min_length, max_length = self._active_resample_length_bounds()
+        n_merged = 0
+        n_split = 0
+        allow_cycle_collapse = self.options.active_resample_allow_cycle_collapse
+        # Bound work by current complexity; each op changes edge count by ±1.
+        max_ops = max(1, 4 * self.graph.number_of_edges() + 4)
+        for _ in range(max_ops):
+            short_edges = sorted(
+                (
+                    (
+                        self._edge_length(self.graph, int(u), int(v)),
+                        int(u),
+                        int(v),
+                    )
+                    for u, v in self.graph.edges()
+                    if self._edge_length(self.graph, int(u), int(v)) < min_length
+                ),
+                key=lambda item: item[0],
+            )
+
+            merged_this_round = False
+            for length, iu, iv in short_edges:
+                if (
+                    not allow_cycle_collapse
+                    and self.graph.consolidation_changes_cycle_count(iu, iv)
+                ):
+                    cycles_before = self.graph.cyclomatic_number()
+                    trial = self.graph.copy()
+                    trial.consolidate_nodes(iu, iv)
+                    cycles_after = trial.cyclomatic_number()
+                    logger.warning(
+                        "Skipping active resample consolidation of edge "
+                        "(%d, %d) (length=%.6f): would change cycle count "
+                        "%d → %d (set active_resample_allow_cycle_collapse=True "
+                        "to allow)",
+                        iu,
+                        iv,
+                        length,
+                        cycles_before,
+                        cycles_after,
+                    )
+                    continue
+
+                keep = self.graph.consolidate_nodes(iu, iv)
+                n_merged += 1
+                merged_this_round = True
+                logger.debug(
+                    "  active resample merge: edge (%d,%d) length=%.6f → node %d",
+                    iu,
+                    iv,
+                    length,
+                    keep,
+                )
+                self._snap_active_resample_node(keep)
+                break
+
+            if merged_this_round:
+                continue
+
+            longest: Optional[Tuple[float, int, int]] = None
+            for u, v in self.graph.edges():
+                iu, iv = int(u), int(v)
+                length = self._edge_length(self.graph, iu, iv)
+                if length > max_length and (
+                    longest is None or length > longest[0]
+                ):
+                    longest = (length, iu, iv)
+
+            if longest is not None:
+                length, iu, iv = longest
+                mid = self.graph.bisect_edge(iu, iv)
+                n_split += 1
+                logger.debug(
+                    "  active resample split: edge (%d,%d) length=%.6f → node %d",
+                    iu,
+                    iv,
+                    length,
+                    mid,
+                )
+                self._snap_active_resample_node(mid)
+                continue
+            break
+        else:
+            logger.warning(
+                "Active resample hit operation cap (%d); "
+                "some edges may remain outside [%.6e, %.6e]",
+                max_ops,
+                min_length,
+                max_length,
+            )
+        return n_merged, n_split
+
+    def _snap_active_resample_node(self, node: int) -> None:
+        """Snap a consolidate/bisect result inside the mesh if it landed outside.
+
+        Raises
+        ------
+        RuntimeError
+            If the node is outside and chord snapping cannot bring it inside.
+        """
+        if not self._is_clearly_outside(self.graph.get_node_position(node)):
+            return
+        if self._snap_node_inside(node):
+            logger.debug(
+                "Active resample snapped node %s inside the mesh",
+                node,
+            )
+            return
+        pos = self.graph.get_node_position(node)
+        raise RuntimeError(
+            "Active resample placed node "
+            f"{node} outside the mesh at {pos} and snapping failed"
+        )
+
+    def _snap_node_inside(self, node: int) -> bool:
+        """If ``node`` is clearly outside, snap it along a surface chord.
+
+        Returns
+        -------
+        bool
+            ``True`` if the node is not clearly outside afterward (either it
+            was already inside, or snapping succeeded). ``False`` if snapping
+            failed and the node remains outside.
+        """
+        pos = self.graph.get_node_position(node)
+        if not self._is_clearly_outside(pos):
+            return True
+        new_pos = self._snap_point_to_chord_midpoint(pos)
+        if new_pos is None:
+            return False
+        logger.debug(
+            "Snapping node %s from %s to chord point %s",
+            node,
+            pos,
+            new_pos,
+        )
+        self.graph.set_node_position(node, new_pos)
+        for nbr in list(self.graph.neighbors(node)):
+            self.graph.edges[node, nbr]["length"] = float(
+                np.linalg.norm(self.graph.get_node_position(nbr) - new_pos)
+            )
+        return not self._is_clearly_outside(new_pos)
+
     def _compute_smoothing_force_for_node(self, node: int) -> np.ndarray:
         """Return ``mean(neighbor positions) - v`` (zeros if no neighbors)."""
         neighbors = list(self.graph.neighbors(node))
@@ -485,7 +802,11 @@ class BasisOptimizer:
         )
         return neighbor_positions.mean(axis=0) - pos
 
-    def _compute_centering_force(self, point: np.ndarray) -> np.ndarray:
+    def _compute_centering_force(
+        self,
+        point: np.ndarray,
+        directions: Optional[np.ndarray] = None,
+    ) -> np.ndarray:
         """Compute a weighted localized centering force toward the medial axis.
 
         For an interior point, casts ``n_rays`` unit directions ``x_i`` with
@@ -495,20 +816,29 @@ class BasisOptimizer:
 
         then returns ``F = -d_min * sum_i x_i w_i / sum_i w_i``. Outside
         points fall back to the closest-point direction.
+
+        Parameters
+        ----------
+        point :
+            Query position.
+        directions :
+            Optional ``(n, 3)`` unit ray directions. When ``None``, uses
+            :meth:`_get_uniform_sphere_directions` for ``n_rays``.
         """
         is_inside = self._point_inside_mesh(point)
         if not is_inside:
             return self._compute_closest_point_direction(point)
 
         try:
-            directions = self._get_uniform_sphere_directions(self.options.n_rays)
+            if directions is None:
+                directions = self._get_uniform_sphere_directions(self.options.n_rays)
             distances: list[float] = []
             valid_directions: list[np.ndarray] = []
             for direction in directions:
                 distance = self._ray_distance_to_surface(point, direction)
                 if distance > 1e-6:
                     distances.append(distance)
-                    valid_directions.append(direction)
+                    valid_directions.append(np.asarray(direction, dtype=float))
 
             if not distances:
                 return np.zeros(3)
@@ -683,9 +1013,7 @@ class BasisOptimizer:
         """Minimum accepted enter–exit chord length for snapping."""
         if self.options.snap_min_chord_length is not None:
             return float(self.options.snap_min_chord_length)
-        extents = np.asarray(self.mesh.extents, dtype=float)
-        diagonal = float(np.linalg.norm(extents))
-        return float(self.options.snap_min_chord_fraction) * diagonal
+        return float(self.options.snap_min_chord_fraction) * self._mesh_bbox_diagonal()
 
     def _snap_point_to_chord_midpoint(
         self, point: np.ndarray
@@ -837,6 +1165,53 @@ class BasisOptimizer:
         """Fallback for outside points: move toward the closest mesh point."""
         direction, _ = self._compute_snap_direction(point)
         return direction
+
+    def _forcing_ray_directions(
+        self, rng: Optional[np.random.Generator] = None
+    ) -> np.ndarray:
+        """Base sphere directions, optionally with per-ray angular jitter."""
+        directions = self._get_uniform_sphere_directions(self.options.n_rays)
+        jitter = float(self.options.ray_jitter)
+        if jitter <= 0.0:
+            return directions
+        if rng is None:
+            rng = np.random.default_rng()
+        return self._apply_angular_ray_jitter(directions, jitter, rng)
+
+    def _apply_angular_ray_jitter(
+        self,
+        directions: np.ndarray,
+        jitter: float,
+        rng: np.random.Generator,
+    ) -> np.ndarray:
+        """Perturb each unit direction independently by angular scale ``jitter``.
+
+        For each direction ``d``, samples a random unit vector in the plane
+        orthogonal to ``d`` and sets ``d' = normalize(d + jitter * ortho)``.
+        For small ``jitter`` this is approximately an angular displacement of
+        magnitude ``jitter`` radians.
+        """
+        dirs = np.asarray(directions, dtype=float)
+        out = np.empty_like(dirs)
+        for i, d in enumerate(dirs):
+            n = float(np.linalg.norm(d))
+            if n <= 1e-15:
+                out[i] = d
+                continue
+            d = d / n
+            # Random direction in the tangent plane.
+            r = rng.normal(size=3)
+            ortho = r - d * float(r @ d)
+            on = float(np.linalg.norm(ortho))
+            if on <= 1e-15:
+                # Degenerate sample; leave unperturbed.
+                out[i] = d
+                continue
+            ortho = ortho / on
+            jittered = d + float(jitter) * ortho
+            jn = float(np.linalg.norm(jittered))
+            out[i] = jittered / jn if jn > 1e-15 else d
+        return out
 
     def _get_uniform_sphere_directions(self, n_points: int) -> np.ndarray:
         """Generate approximately uniform directions on the unit sphere."""

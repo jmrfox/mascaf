@@ -33,6 +33,7 @@ logging.getLogger(__name__).addHandler(logging.NullHandler())
 # Re-export primary classes and functions for convenient access at package level
 from swctools import SWCModel  # noqa: E402
 
+from .logging_config import configure_logging  # noqa: E402
 from .basis_optimizer import BasisOptimizer, BasisOptimizerOptions  # noqa: E402
 from .cable_fitting import CableFitter, FitOptions  # noqa: E402
 from .cgal import (  # noqa: E402
@@ -87,6 +88,7 @@ __all__ = [
     "CGALOperator",
     "BasisOptimizer",
     "BasisOptimizerOptions",
+    "configure_logging",
     "MorphologyGraph",
     "Junction",
     # Validation

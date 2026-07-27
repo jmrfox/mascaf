@@ -258,6 +258,16 @@ class MorphologyGraph(Graph3D):
                 if u != v:
                     graph.add_edge(u, v)
 
+        logger.info(
+            "Resampled morphology: %d nodes, %d edges "
+            "(max_edge_length=%.4f, source %d nodes / %d edges, %d sections)",
+            graph.number_of_nodes(),
+            graph.number_of_edges(),
+            float(max_edge_length),
+            self.number_of_nodes(),
+            self.number_of_edges(),
+            len(sections),
+        )
         return graph
 
     @classmethod
@@ -304,6 +314,36 @@ class MorphologyGraph(Graph3D):
             xyz=j.xyz,
             radius=float(j.radius),
         )
+
+    def consolidate_nodes(self, u: int, v: int) -> int:
+        """Merge ``(u, v)`` at the midpoint; average radii when both present."""
+        if u not in self or v not in self:
+            raise KeyError(f"Both nodes must exist; got u={u}, v={v}")
+        r_u = self.nodes[u].get("radius")
+        r_v = self.nodes[v].get("radius")
+        keep = super().consolidate_nodes(u, v)
+        if r_u is not None and r_v is not None:
+            self.nodes[keep]["radius"] = 0.5 * (float(r_u) + float(r_v))
+        elif r_u is not None:
+            self.nodes[keep]["radius"] = float(r_u)
+        elif r_v is not None:
+            self.nodes[keep]["radius"] = float(r_v)
+        return keep
+
+    def bisect_edge(self, u: int, v: int) -> int:
+        """Bisect ``(u, v)`` at the midpoint; average radii when both present."""
+        if u not in self or v not in self:
+            raise KeyError(f"Both nodes must exist; got u={u}, v={v}")
+        r_u = self.nodes[u].get("radius")
+        r_v = self.nodes[v].get("radius")
+        new_id = super().bisect_edge(u, v)
+        if r_u is not None and r_v is not None:
+            self.nodes[new_id]["radius"] = 0.5 * (float(r_u) + float(r_v))
+        elif r_u is not None:
+            self.nodes[new_id]["radius"] = float(r_u)
+        elif r_v is not None:
+            self.nodes[new_id]["radius"] = float(r_v)
+        return new_id
 
     def copy(self) -> "MorphologyGraph":
         """Return a deep copy of the graph with all node arrays copied.

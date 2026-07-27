@@ -21,7 +21,7 @@ from swctools import SWCModel, plot_model
 if TYPE_CHECKING:
     import plotly.graph_objects as go  # type: ignore
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.WARNING)
 
 print("✅ Libraries imported successfully!")
 
@@ -31,7 +31,7 @@ print("✅ Libraries imported successfully!")
 def get_ts_pipeline_params(idx: int) -> dict:
     qst = 0.5  # for all
     mcst = 5  # for all
-    max_edge_length_fraction = 0.1 # fraction of the spine's bounding box diagonal
+    max_edge_length_fraction = 0.06 # fraction of the spine's bounding box diagonal
 
     fig_width = 800
     fig_height = 600
@@ -61,15 +61,15 @@ def get_ts_pipeline_params(idx: int) -> dict:
     }
 
     pruning_length_fractions = {
-        1: 0.2,
-        2: 0.2,
-        3: 0.2,
-        4: 0.2,
-        21: 0.2,
-        24: 0.2,
-        48: 0.2,
-        67: 0.2,
-        76: 0.2,
+        1: 0.1,
+        2: 0.1,
+        3: 0.1,
+        4: 0.1,
+        21: 0.1,
+        24: 0.1,
+        48: 0.1,
+        67: 0.1,
+        76: 0.1,
     }
 
     # max_edge_lengths = {
@@ -89,12 +89,18 @@ def get_ts_pipeline_params(idx: int) -> dict:
         pruning_length_fraction=pruning_length_fractions[idx],
         do_snapping=True,
         do_forcing=True,
-        n_rays=10,
-        max_iterations=3,
+        active_resample=True,
+        n_rays=6,
+        max_iterations=10,
         alpha_s=0.1,
-        step_scale=1.0,
+        step_scale=0.1,
+        step_cap_factor=0.5,
         preserve_terminal_nodes=True,
         preserve_branch_nodes=False,
+        ray_jitter=0.1,
+        localization_beta=1.0,
+        active_resample_min_fraction=0.05,
+        active_resample_max_fraction=0.2,
     )
 
     rot = Rotation.from_euler("xyz", rotations[idx], degrees=True)
@@ -116,7 +122,7 @@ def get_ts_pipeline_params(idx: int) -> dict:
 pdf_scale = 2
 
 # %%
-spine_idx = 4
+spine_idx = 3
 params = get_ts_pipeline_params(spine_idx)
 
 mesh_path = f"../data/mesh/processed/{params['object_name']}.obj"
@@ -200,7 +206,7 @@ for key, value in stats.items():
 # FIGURE: original (red) vs optimized (blue) basis
 basis_opt_fig: "go.Figure" = mm.visualize_mesh_3d(
     skel=[basis, optimized_basis],
-    show_axes=True,
+    show_axes=False,
     title="",
     skel_color=["red", "blue"],
     skel_line_width=3.0,

@@ -225,8 +225,16 @@ def _compute_morphology_node_radii(
     options: FitOptions,
 ) -> None:
     """Populate radius-related node attributes on the morphology graph."""
+    logger.info(
+        "Computing node radii: strategy=%s, %d nodes, probe_eps=%.2e, tries=%d",
+        options.radius_strategy,
+        graph.number_of_nodes(),
+        options.section_probe_eps,
+        options.section_probe_tries,
+    )
     bbox_size = _mesh_bbox_size(mesh)
     eps = max(1e-12, float(options.section_probe_eps) * bbox_size)
+    logger.debug("Radius section probe eps (absolute)=%.6e", eps)
 
     for node in graph.nodes():
         point = _get_graph_node_position(graph, node)
@@ -259,6 +267,16 @@ def _compute_morphology_node_radii(
             graph.nodes[node]["radius"],
             len(per_edge_radii),
             options.multi_tangent_reduction,
+        )
+
+    radii = [float(graph.nodes[n]["radius"]) for n in graph.nodes()]
+    if radii:
+        logger.info(
+            "Radii computed: min=%.6f max=%.6f mean=%.6f median=%.6f",
+            min(radii),
+            max(radii),
+            float(np.mean(radii)),
+            float(np.median(radii)),
         )
 
 

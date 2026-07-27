@@ -8,14 +8,40 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+---
+
+## [1.2.0] — 2026-07-27
+
 ### Added
 
+- `mascaf.logging_config.configure_logging` for CLI/notebook runs: timestamped
+  console and/or file handlers, ``mascaf`` logger level, and optional
+  suppression of noisy third-party DEBUG loggers (plotting/export: kaleido,
+  choreographer, swctools, etc.). CLI scripts may expose ``--full-debug`` to
+  include those loggers.
+- Detailed DEBUG logging across the TS pipeline script and core stages
+  (resample, basis optimizer phases, radius fitting, validation metrics).
+- `BasisOptimizerOptions.ray_jitter` (default ``0.0``): per forcing iteration,
+  independently perturb each centering-ray direction by this angular scale
+  (approx. radians); shared across nodes within an iteration. Off when ``0``.
+- Optional forcing ``active_resample`` (default off) with
+  ``active_resample_min_fraction`` / ``active_resample_max_fraction``: after
+  each forcing iteration, merge endpoints of edges shorter than the min
+  (``consolidate_nodes``) and bisect edges longer than the max
+  (``bisect_edge``), using fractions of the mesh bounding-box diagonal.
+  Requires ``max_fraction >= 2 * min_fraction`` to avoid merge/split
+  oscillation. Branch nodes are eligible; degree is preserved as neighbor
+  union (``m+n-2`` when endpoints share no other neighbors). Midpoints that
+  land outside the mesh are chord-snapped inside (same helper as the
+  snapping phase); failure raises ``RuntimeError``. Consolidations that would
+  change the cyclomatic number are skipped by default with a warning; set
+  ``active_resample_allow_cycle_collapse`` to allow them.
 - `mascaf.mesh_contains` with ``point_inside_mesh`` / ``points_inside_mesh``
   (signed-distance containment; positive inside, negative outside; surface
   shell within tolerance counts as inside). Used by MorphologyGraph outside
   queries, BasisOptimizer snapping/forcing/centering, and SkeletonGraph
   outside-only projection so those checks agree.
-- `BasisOptimizerOptions.step_scale` (default ``1.0``): multiplies the blended
+- `BasisOptimizerOptions.step_scale` (default ``0.5``): multiplies the blended
   forcing update before surface-distance capping.
 - `BasisOptimizerOptions.pruning_length` and `pruning_length_fraction`:
   prune terminal→branch stubs shorter than an absolute length, or shorter than
