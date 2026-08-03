@@ -36,6 +36,13 @@ from swctools import SWCModel  # noqa: E402
 from .logging_config import configure_logging  # noqa: E402
 from .basis_optimizer import BasisOptimizer, BasisOptimizerOptions  # noqa: E402
 from .cable_fitting import CableFitter, FitOptions  # noqa: E402
+from .fitting_optimizer import (  # noqa: E402
+    FittingEvalRecord,
+    FittingOptimizeResult,
+    FittingOptimizer,
+    FittingOptimizerOptions,
+    select_prefer_larger,
+)
 from .cgal import (  # noqa: E402
     CGALBuilder,
     CGALBuildError,
@@ -88,6 +95,11 @@ __all__ = [
     "CGALOperator",
     "BasisOptimizer",
     "BasisOptimizerOptions",
+    "FittingOptimizer",
+    "FittingOptimizerOptions",
+    "FittingOptimizeResult",
+    "FittingEvalRecord",
+    "select_prefer_larger",
     "configure_logging",
     "MorphologyGraph",
     "Junction",
