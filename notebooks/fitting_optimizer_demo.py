@@ -21,6 +21,8 @@ from mascaf import (
     MeshManager,
     SkeletonGraph,
     Validation,
+    fraction_bounds_around_suggestion,
+    suggest_fit_parameters,
 )
 from swctools import SWCModel, plot_model
 
@@ -32,7 +34,7 @@ logging.basicConfig(level=logging.WARNING)
 # Set `spine_idx` to any available toric spine (`TS1`, `TS2`, …).
 
 # %%
-spine_idx = 3
+spine_idx = 2
 mcf_qst = 0.5
 mcf_mcst = 5
 
@@ -56,14 +58,26 @@ mm.visualize_mesh_3d(skel=skeleton, show_axes=False, height=700, width=900)
 # %% [markdown]
 # ## Configure and run `FittingOptimizer`
 #
-# Each trial: `CableFitter` → scale radii to match mesh SA → `|ΔV| / V_mesh`.
+# Seed search bounds from the mesh-thickness FitParameterOracle (SDF), then
+# optionally refine mel against volume error. Each trial: `CableFitter` → scale
+# radii to match mesh SA → `|ΔV| / V_mesh`.
 #
 # Optional `BasisOptimizerOptions` are passed through `FitOptions` and run inside
-# every trial (expensive). Leave as `None` for a faster mel search.
+# every trial (expensive). Leave as `None` for a faster mel search, or pass the
+# oracle's basis options.
 
 # %%
-# Set to a mascaf.BasisOptimizerOptions(...) instance to enable per-trial
-# basis optimization (slow — runs inside every FittingOptimizer evaluation).
+suggested = suggest_fit_parameters(mm, skeleton)
+for line in suggested.rationale:
+    print(f"Oracle: {line}")
+bounds = fraction_bounds_around_suggestion(suggested, rel_span=0.5)
+print(
+    f"Oracle mel={suggested.max_edge_length:.4g} "
+    f"(frac={suggested.max_edge_length_fraction:.4g}); "
+    f"search bounds={bounds}"
+)
+
+# Set to suggested.basis_optimizer_options to enable per-trial basis opt (slow).
 basis_optimizer_options = None
 
 fit_options = FitOptions(
@@ -72,7 +86,7 @@ fit_options = FitOptions(
 )
 
 opt_options = FittingOptimizerOptions(
-    fraction_bounds=(0.03, 0.2),
+    fraction_bounds=bounds,
     maxiter=12,
     xatol=5e-3,
     volume_error_rel_tol=0.05,

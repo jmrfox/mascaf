@@ -51,6 +51,8 @@ class BasisOptimizerOptions:
       ``centering_error_stop_fraction`` times the first-iteration value
     - relative change in ``E`` below ``centering_error_plateau_tol`` for
       ``centering_error_plateau_patience`` consecutive iterations
+    - centering error increases for
+      ``centering_error_increase_patience`` consecutive iterations
 
     All fields are keyword arguments to the dataclass constructor; see
     each field's inline annotation for defaults and semantics.
@@ -562,15 +564,17 @@ class BasisOptimizer:
                 if centering_error > e_prev:
                     increase_streak += 1
                     if increase_streak >= increase_patience:
-                        logger.warning(
-                            "  Centering error increased for %d consecutive "
-                            "iterations (now %.6e, was %.6e at iter %d)",
+                        logger.info(
+                            "  Stopping at iteration %d: centering error "
+                            "increased for %d consecutive iterations "
+                            "(now %.6e, was %.6e at iter %d)",
+                            iteration,
                             increase_streak,
                             centering_error,
                             e_prev,
                             iteration - 1,
                         )
-                        increase_streak = 0
+                        break
                 else:
                     increase_streak = 0
 
@@ -815,7 +819,9 @@ class BasisOptimizer:
         ``w_i = (d_i + eps)^(-p) * exp(-beta * (d_i - d_min) / d_min)``,
 
         then returns ``F = -d_min * sum_i x_i w_i / sum_i w_i``. Outside
-        points fall back to the closest-point direction.
+        points fall back to the closest-point direction. Failed individual
+        rays are skipped; if no valid rays remain, returns zeros (never
+        wall-attracts an interior point via closest-point).
 
         Parameters
         ----------
@@ -829,43 +835,50 @@ class BasisOptimizer:
         if not is_inside:
             return self._compute_closest_point_direction(point)
 
-        try:
-            if directions is None:
-                directions = self._get_uniform_sphere_directions(self.options.n_rays)
-            distances: list[float] = []
-            valid_directions: list[np.ndarray] = []
-            for direction in directions:
+        if directions is None:
+            directions = self._get_uniform_sphere_directions(self.options.n_rays)
+        distances: list[float] = []
+        valid_directions: list[np.ndarray] = []
+        for direction in directions:
+            try:
                 distance = self._ray_distance_to_surface(point, direction)
-                if distance > 1e-6:
-                    distances.append(distance)
-                    valid_directions.append(np.asarray(direction, dtype=float))
-
-            if not distances:
-                return np.zeros(3)
-
-            d_min = min(distances)
-            if d_min <= 0:
-                return np.zeros(3)
-
-            eps = self.options.weight_epsilon
-            p = self.options.repulsion_power
-            beta = self.options.localization_beta
-
-            force = np.zeros(3)
-            weight_sum = 0.0
-            for direction, distance in zip(valid_directions, distances):
-                weight = (distance + eps) ** (-p) * np.exp(
-                    -beta * (distance - d_min) / d_min
+            except Exception as exc:
+                # Skip failed rays; do not fall back to closest-point for
+                # interior queries (that would attract toward the wall).
+                logger.debug(
+                    "Skipping centering ray from %s along %s: %s",
+                    point,
+                    direction,
+                    exc,
                 )
-                force -= direction * weight
-                weight_sum += weight
+                continue
+            if distance > 1e-6:
+                distances.append(distance)
+                valid_directions.append(np.asarray(direction, dtype=float))
 
-            if weight_sum <= 1e-10:
-                return np.zeros(3)
-            return d_min * (force / weight_sum)
-        except Exception as exc:
-            logger.error("Failed to compute centering force: %s", exc)
-            return self._compute_closest_point_direction(point)
+        if not distances:
+            return np.zeros(3)
+
+        d_min = min(distances)
+        if d_min <= 0:
+            return np.zeros(3)
+
+        eps = self.options.weight_epsilon
+        p = self.options.repulsion_power
+        beta = self.options.localization_beta
+
+        force = np.zeros(3)
+        weight_sum = 0.0
+        for direction, distance in zip(valid_directions, distances):
+            weight = (distance + eps) ** (-p) * np.exp(
+                -beta * (distance - d_min) / d_min
+            )
+            force -= direction * weight
+            weight_sum += weight
+
+        if weight_sum <= 1e-10:
+            return np.zeros(3)
+        return d_min * (force / weight_sum)
 
     def _outside_distance_tol(self) -> float:
         """Tolerance for treating a point as clearly outside the mesh."""

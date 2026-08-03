@@ -8,12 +8,12 @@ from scipy.spatial.transform import Rotation
 
 from mascaf import (
     BasisOptimizer,
-    BasisOptimizerOptions,
     FitOptions,
     MeshManager,
     MorphologyGraph,
     SkeletonGraph,
     Validation,
+    suggest_fit_parameters,
 )
 from mascaf.cable_fitting import _compute_morphology_node_radii
 from swctools import SWCModel, plot_model
@@ -27,18 +27,18 @@ print("✅ Libraries imported successfully!")
 
 
 # %%
-# per-spine parameters
+# per-spine parameters (camera / I/O). Mel + basis opts come from the fit oracle
+# unless you set manual overrides below.
 def get_ts_pipeline_params(idx: int) -> dict:
     qst = 0.5  # for all
     mcst = 5  # for all
-    max_edge_length_fraction = 0.06 # fraction of the spine's bounding box diagonal
 
     fig_width = 800
     fig_height = 600
 
     rotations = {
-        1: [0, -30, 20], 
-        2: [-40, 0, 0], 
+        1: [0, -30, 20],
+        2: [-40, 0, 0],
         3: [60, 0, 20],
         4: [-30, 40, 50],
         21: [0, 30, 95],
@@ -49,59 +49,16 @@ def get_ts_pipeline_params(idx: int) -> dict:
     }
 
     zooms = {
-        1: 1.0, 
-        2: 1.0, 
-        3: 1.0, 
-        4: 1.0, 
-        21: 1.0, 
-        24: 1.0, 
-        48: 1.0, 
-        67: 1.0, 
+        1: 1.0,
+        2: 1.0,
+        3: 1.0,
+        4: 1.0,
+        21: 1.0,
+        24: 1.0,
+        48: 1.0,
+        67: 1.0,
         76: 1.0,
     }
-
-    pruning_length_fractions = {
-        1: 0.1,
-        2: 0.1,
-        3: 0.1,
-        4: 0.1,
-        21: 0.1,
-        24: 0.1,
-        48: 0.1,
-        67: 0.1,
-        76: 0.1,
-    }
-
-    # max_edge_lengths = {
-    #     1: 200, 
-    #     2: 50, 
-    #     3: 150, 
-    #     4: 200, 
-    #     21: 200, 
-    #     24: 200, 
-    #     48: 200, 
-    #     67: 200, 
-    #     76: 200,
-    # }
-
-    optimizer_options = BasisOptimizerOptions(
-        do_pruning=True,
-        pruning_length_fraction=pruning_length_fractions[idx],
-        do_snapping=True,
-        do_forcing=True,
-        active_resample=True,
-        n_rays=6,
-        max_iterations=10,
-        alpha_s=0.1,
-        step_scale=0.1,
-        step_cap_factor=0.5,
-        preserve_terminal_nodes=True,
-        preserve_branch_nodes=False,
-        ray_jitter=0.1,
-        localization_beta=1.0,
-        active_resample_min_fraction=0.05,
-        active_resample_max_fraction=0.2,
-    )
 
     rot = Rotation.from_euler("xyz", rotations[idx], degrees=True)
     zoom = zooms[idx]
@@ -112,27 +69,50 @@ def get_ts_pipeline_params(idx: int) -> dict:
         "qst": qst,
         "mcst": mcst,
         "eye_coord": eye_coord,
-        # "fit_options": fit_options,
         "fig_width": fig_width,
         "fig_height": fig_height,
-        "max_edge_length_fraction": max_edge_length_fraction,
-        "optimizer_options": optimizer_options,
+        # Optional manual overrides (None → use FitParameterOracle):
+        "max_edge_length_override": None,
+        "basis_overrides": {},  # e.g. {"n_rays": 24, "step_scale": 0.25}
     }
 
 pdf_scale = 2
 
 # %%
-spine_idx = 3
+spine_idx = 2
 params = get_ts_pipeline_params(spine_idx)
 
 mesh_path = f"../data/mesh/processed/{params['object_name']}.obj"
 mm = MeshManager(mesh_path=mesh_path)
 model_length = mm.bounding_box_diagonal()
-params["max_edge_length"] = int(model_length * params["max_edge_length_fraction"])
 
 polylines_name = f"TS{spine_idx}_qst{params['qst']}_mcst{params['mcst']}"
 skeleton = SkeletonGraph.from_txt(
     f"../data/mcf_skeletons/{polylines_name}.polylines.txt"
+)
+
+suggested = suggest_fit_parameters(
+    mm,
+    skeleton,
+    overrides=params.get("basis_overrides") or None,
+)
+for line in suggested.rationale:
+    print(f"Oracle: {line}")
+
+if params.get("max_edge_length_override") is not None:
+    params["max_edge_length"] = float(params["max_edge_length_override"])
+else:
+    params["max_edge_length"] = float(suggested.max_edge_length)
+params["optimizer_options"] = suggested.basis_optimizer_options
+params["max_edge_length_fraction"] = (
+    params["max_edge_length"] / model_length if model_length > 0 else float("nan")
+)
+params["max_edge_length_tag"] = int(round(float(params["max_edge_length"])))
+print(
+    f"Using mel={params['max_edge_length']:.4g} "
+    f"(frac={params['max_edge_length_fraction']:.4g}, "
+    f"mel/t={suggested.mel_over_thickness:.4g}, "
+    f"tag={params['max_edge_length_tag']})"
 )
 
 fig_out_dir = f"../viz/ts{spine_idx}"
@@ -222,7 +202,7 @@ basis_opt_fig.update_layout(
     )
 )
 basis_opt_fig.write_image(
-    f"{fig_out_dir}/TS{spine_idx}_mel{params['max_edge_length']}_basis_opt.pdf",
+    f"{fig_out_dir}/TS{spine_idx}_mel{params['max_edge_length_tag']}_basis_opt.pdf",
     format="pdf",
     engine="kaleido",
     width=600,
@@ -234,7 +214,7 @@ basis_opt_fig.show()
 # %%
 # Cable fitting: estimate radii on the optimized basis
 swc_out_dir = f"../data/swc/current/{polylines_name}"
-swc_filepath = f"{swc_out_dir}/TS{spine_idx}_mel{params['max_edge_length']}.swc"
+swc_filepath = f"{swc_out_dir}/TS{spine_idx}_mel{params['max_edge_length_tag']}.swc"
 
 if not os.path.exists(swc_out_dir):
     os.makedirs(swc_out_dir)
@@ -258,7 +238,7 @@ validator.full_validation()
 
 model = SWCModel.from_swc_file(swc_filepath)
 model.print_attributes(node_info=False, edge_info=False)
-title = f"TS{spine_idx}_mel{params['max_edge_length']}"
+title = f"TS{spine_idx}_mel{params['max_edge_length_tag']}"
 morph_fig = plot_model(
     swc_model=model,
     slider=False,
@@ -277,7 +257,7 @@ morph_fig.update_layout(
     )
 )
 morph_filename = (
-    f"{fig_out_dir}/TS{spine_idx}_mel{params['max_edge_length']}_" f"morph.pdf"
+    f"{fig_out_dir}/TS{spine_idx}_mel{params['max_edge_length_tag']}_" f"morph.pdf"
 )
 morph_fig.write_image(
     morph_filename,
@@ -295,13 +275,13 @@ morph.scale_radii_to_match_mesh(
 )
 
 # save normalized to file
-swc_filepath = f"{swc_out_dir}/TS{spine_idx}_mel{params["max_edge_length"]}_norm.swc"
+swc_filepath = f"{swc_out_dir}/TS{spine_idx}_mel{params['max_edge_length_tag']}_norm.swc"
 morph.to_swc_file(swc_filepath)
 
 # load and plot
 swc_model = SWCModel.from_swc_file(swc_filepath)
 swc_model.print_attributes(node_info=False, edge_info=False)
-title = f"TS{spine_idx}_s{params["max_edge_length"]}"
+title = f"TS{spine_idx}_s{params['max_edge_length_tag']}"
 norm_fig: "go.Figure" = plot_model(
     swc_model=swc_model,
     slider=False,
@@ -320,7 +300,7 @@ norm_fig.update_layout(
     )
 )
 norm_filename = (
-    f"{fig_out_dir}/TS{spine_idx}_mel{params['max_edge_length']}_" f"morph_norm.pdf"
+    f"{fig_out_dir}/TS{spine_idx}_mel{params['max_edge_length_tag']}_" f"morph_norm.pdf"
 )
 norm_fig.write_image(
     norm_filename,
@@ -363,7 +343,7 @@ vs_fig.update_layout(
     )
 )
 vs_filename = (
-    f"{fig_out_dir}/TS{spine_idx}_mel{params['max_edge_length']}_" f"morph_vs_skel.pdf"
+    f"{fig_out_dir}/TS{spine_idx}_mel{params['max_edge_length_tag']}_" f"morph_vs_skel.pdf"
 )
 vs_fig.write_image(
     vs_filename,

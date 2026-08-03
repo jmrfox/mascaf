@@ -43,6 +43,14 @@ from .fitting_optimizer import (  # noqa: E402
     FittingOptimizerOptions,
     select_prefer_larger,
 )
+from .fit_oracle import (  # noqa: E402
+    FitFeatures,
+    FitOracleOptions,
+    SuggestedFitParameters,
+    compute_fit_features,
+    fraction_bounds_around_suggestion,
+    suggest_fit_parameters,
+)
 from .cgal import (  # noqa: E402
     CGALBuilder,
     CGALBuildError,
@@ -56,6 +64,12 @@ from .cgal import (  # noqa: E402
 from .graph3d import Graph3D  # noqa: E402
 from .mesh import MeshManager, example_mesh  # noqa: E402
 from .mesh_contains import point_inside_mesh, points_inside_mesh  # noqa: E402
+from .shape_diameter import (  # noqa: E402
+    ThicknessSummary,
+    compute_shape_diameter,
+    mesh_thickness_summary,
+    summarize_thickness,
+)
 from .skeleton import SkeletonGraph  # noqa: E402
 from .morphology_graph import (  # noqa: E402
     MorphologyGraph,
@@ -100,6 +114,16 @@ __all__ = [
     "FittingOptimizeResult",
     "FittingEvalRecord",
     "select_prefer_larger",
+    "FitFeatures",
+    "FitOracleOptions",
+    "SuggestedFitParameters",
+    "compute_fit_features",
+    "suggest_fit_parameters",
+    "fraction_bounds_around_suggestion",
+    "ThicknessSummary",
+    "compute_shape_diameter",
+    "mesh_thickness_summary",
+    "summarize_thickness",
     "configure_logging",
     "MorphologyGraph",
     "Junction",

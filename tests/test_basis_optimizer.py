@@ -438,6 +438,81 @@ def test_forcing_stops_on_centering_error_plateau(unit_sphere, monkeypatch):
     assert call_count["n"] == 3
 
 
+def test_forcing_stops_on_centering_error_increase(unit_sphere, monkeypatch):
+    graph = _chain_graph(
+        [
+            np.array([-0.5, 0.0, 0.0]),
+            np.array([0.3, 0.0, 0.0]),
+            np.array([0.5, 0.0, 0.0]),
+        ]
+    )
+    opts = BasisOptimizerOptions(
+        do_pruning=False,
+        do_snapping=False,
+        do_forcing=True,
+        preserve_terminal_nodes=True,
+        alpha_s=0.0,
+        max_iterations=20,
+        convergence_threshold=0.0,
+        centering_error_stop_fraction=0.0,
+        centering_error_plateau_tol=0.0,
+        centering_error_plateau_patience=100,
+        centering_error_increase_patience=2,
+        n_rays=6,
+    )
+    opt = BasisOptimizer(graph, unit_sphere, opts)
+    call_count = {"n": 0}
+
+    def _rising_force(point, directions=None):
+        call_count["n"] += 1
+        # Iter magnitudes: 1, 2, 3 → stop after two consecutive increases.
+        return np.array([float(call_count["n"]), 0.0, 0.0])
+
+    monkeypatch.setattr(opt, "_compute_centering_force", _rising_force)
+    opt._run_forcing_phase()
+    # iter0 E=1, iter1 E=2 (streak1), iter2 E=3 (streak2) → stop; 3 evals
+    assert call_count["n"] == 3
+
+
+def test_centering_force_skips_failed_rays_interior(unit_sphere, monkeypatch):
+    """Interior queries must not wall-attract when some rays miss."""
+    graph = _chain_graph(
+        [
+            np.array([-0.5, 0.0, 0.0]),
+            np.array([0.0, 0.0, 0.0]),
+            np.array([0.5, 0.0, 0.0]),
+        ]
+    )
+    opt = BasisOptimizer(graph, unit_sphere, BasisOptimizerOptions(n_rays=6))
+    # Off-center interior point: closest-point pulls toward the near wall.
+    point = np.array([0.6, 0.0, 0.0])
+    closest = opt._compute_closest_point_direction(point)
+    assert np.linalg.norm(closest) > 0.1
+
+    orig = opt._ray_distance_to_surface
+
+    def _one_miss(point, direction):
+        d = np.asarray(direction, dtype=float)
+        # Fail only the +X ray
+        if d[0] > 0.5 and abs(d[1]) < 0.1 and abs(d[2]) < 0.1:
+            raise RuntimeError("simulated miss")
+        return orig(point, direction)
+
+    monkeypatch.setattr(opt, "_ray_distance_to_surface", _one_miss)
+    force = opt._compute_centering_force(point)
+    # Still a centering force (non-zero), and not identical to wall attraction
+    assert np.linalg.norm(force) > 1e-3
+    assert not np.allclose(force, closest, atol=1e-3)
+
+    # All rays fail → zero (not closest-point)
+    monkeypatch.setattr(
+        opt,
+        "_ray_distance_to_surface",
+        lambda point, direction: (_ for _ in ()).throw(RuntimeError("miss")),
+    )
+    assert np.allclose(opt._compute_centering_force(point), 0.0)
+
+
 def test_snap_moves_outside_point_to_chord_midpoint(unit_sphere):
     graph = _chain_graph(
         [

@@ -31,6 +31,7 @@ from mascaf import (
     MorphologyGraph,
     SkeletonGraph,
     Validation,
+    suggest_fit_parameters,
 )
 from mascaf.cable_fitting import _compute_morphology_node_radii
 from mascaf.logging_config import configure_logging
@@ -246,7 +247,12 @@ def _geom_metrics(validator: Validation) -> dict[str, float]:
     return out
 
 
-def run_spine(idx: int, cfg: dict[str, Any]) -> dict[str, Any]:
+def run_spine(
+    idx: int,
+    cfg: dict[str, Any],
+    *,
+    use_oracle: bool = True,
+) -> dict[str, Any]:
     """Run the full pipeline for one spine; return metrics row."""
     object_name = f"TS{idx}"
     prefix = f"ts{idx}"
@@ -285,11 +291,62 @@ def run_spine(idx: int, cfg: dict[str, Any]) -> dict[str, Any]:
         skeleton.get_total_length(),
     )
 
-    max_edge_length = int(model_length * float(cfg["max_edge_length_fraction"]))
+    if use_oracle:
+        suggested = suggest_fit_parameters(mm, skeleton)
+        for line in suggested.rationale:
+            logger.info("Oracle: %s", line)
+        max_edge_length = float(suggested.max_edge_length)
+        opt_opts = suggested.basis_optimizer_options
+        # Allow explicit cfg overrides on top of oracle
+        if cfg.get("max_edge_length_fraction") is not None and cfg.get(
+            "force_cfg_mel", False
+        ):
+            max_edge_length = float(
+                model_length * float(cfg["max_edge_length_fraction"])
+            )
+            logger.info(
+                "Overriding oracle mel with cfg fraction → %.4f",
+                max_edge_length,
+            )
+        # Merge selected optimizer overrides from cfg when present
+        override_keys = (
+            "n_rays",
+            "ray_jitter",
+            "step_scale",
+            "localization_beta",
+            "max_iterations",
+            "alpha_s",
+            "pruning_length_fraction",
+            "active_resample",
+            "active_resample_min_fraction",
+            "active_resample_max_fraction",
+            "preserve_terminal_nodes",
+            "preserve_branch_nodes",
+        )
+        from dataclasses import replace as _replace
+
+        updates = {
+            k: cfg[k]
+            for k in override_keys
+            if k in cfg and cfg.get("force_cfg_optimizer", False)
+        }
+        if updates:
+            opt_opts = _replace(opt_opts, **updates)
+        logger.info(
+            "Using oracle mel=%.4f (frac=%.4g, mel/t=%.4g)",
+            max_edge_length,
+            suggested.max_edge_length_fraction,
+            suggested.mel_over_thickness,
+        )
+    else:
+        max_edge_length = int(model_length * float(cfg["max_edge_length_fraction"]))
+        opt_opts = _optimizer_options(cfg)
+
     logger.debug(
-        "max_edge_length=%d (fraction=%.4f × diagonal)",
+        "max_edge_length=%s (use_oracle=%s, diagonal=%.4f)",
         max_edge_length,
-        float(cfg["max_edge_length_fraction"]),
+        use_oracle,
+        model_length,
     )
 
     _pipeline_step(2, "Export mesh figures")
@@ -306,14 +363,13 @@ def run_spine(idx: int, cfg: dict[str, Any]) -> dict[str, Any]:
         skeleton, float(max_edge_length)
     )
     logger.info(
-        "%s initial basis: %d nodes, %d edges (mel=%d)",
+        "%s initial basis: %d nodes, %d edges (mel=%.4f)",
         object_name,
         basis.number_of_nodes(),
         basis.number_of_edges(),
-        max_edge_length,
+        float(max_edge_length),
     )
 
-    opt_opts = _optimizer_options(cfg)
     logger.debug("BasisOptimizerOptions: %s", opt_opts)
 
     _pipeline_step(4, "Optimize basis (prune / snap / force)")
@@ -334,10 +390,11 @@ def run_spine(idx: int, cfg: dict[str, Any]) -> dict[str, Any]:
     _write_figure(basis_opt_fig, _OUT_DIR / f"{prefix}_skel_opt.pdf")
 
     _pipeline_step(5, "Fit radii and write SWC")
+    mel_tag = int(round(float(max_edge_length)))
     swc_dir = _SWC_ROOT / polylines_name
     swc_dir.mkdir(parents=True, exist_ok=True)
-    swc_path = swc_dir / f"{object_name}_mel{max_edge_length}.swc"
-    swc_norm_path = swc_dir / f"{object_name}_mel{max_edge_length}_norm.swc"
+    swc_path = swc_dir / f"{object_name}_mel{mel_tag}.swc"
+    swc_norm_path = swc_dir / f"{object_name}_mel{mel_tag}_norm.swc"
 
     fit_options = FitOptions(
         max_edge_length=max_edge_length,
@@ -621,6 +678,14 @@ def main(argv: list[str] | None = None) -> int:
             "(kaleido, choreographer, etc.). By default those stay at WARNING."
         ),
     )
+    parser.add_argument(
+        "--no-oracle",
+        action="store_true",
+        help=(
+            "Disable FitParameterOracle suggestions; use SPINES "
+            "max_edge_length_fraction and _DEFAULT_OPTIMIZER instead."
+        ),
+    )
     args = parser.parse_args(argv)
 
     configure_logging(
@@ -647,7 +712,7 @@ def main(argv: list[str] | None = None) -> int:
     for idx in spine_ids:
         logger.info("==== TS%d ====", idx)
         try:
-            row = run_spine(idx, SPINES[idx])
+            row = run_spine(idx, SPINES[idx], use_oracle=not args.no_oracle)
             rows.append(row)
         except Exception:
             msg = traceback.format_exc()
