@@ -8,6 +8,8 @@ on:
         required: true
         default: "no"
   push:
+    branches:
+      - main
     tags:
       - "v*"
 
@@ -23,6 +25,7 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
+          fetch-tags: true
 
       - name: Validate manual trigger confirmation
         if: github.event_name == 'workflow_dispatch'
@@ -32,7 +35,60 @@ jobs:
             exit 1
           fi
 
+      - name: Detect version bump
+        id: version
+        run: |
+          read_version() {
+            python3 -c "import tomllib, sys; print(tomllib.load(open(sys.argv[1], 'rb'))['project']['version'])" "$1"
+          }
+
+          NEW="$(read_version pyproject.toml)"
+          echo "version=${NEW}" >> "${GITHUB_OUTPUT}"
+
+          if [ "${{ github.event_name }}" != "push" ] || [ "${{ github.ref }}" != "refs/heads/main" ]; then
+            echo "bumped=true" >> "${GITHUB_OUTPUT}"
+            echo "Proceeding (${{ github.event_name }})."
+            exit 0
+          fi
+
+          OLD=""
+          if git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+            if git show HEAD^:pyproject.toml > /tmp/old-pyproject.toml 2>/dev/null; then
+              OLD="$(read_version /tmp/old-pyproject.toml)"
+            fi
+          fi
+
+          if [ "${NEW}" != "${OLD}" ]; then
+            echo "bumped=true" >> "${GITHUB_OUTPUT}"
+            echo "Version changed: '${OLD}' -> '${NEW}'"
+          else
+            echo "bumped=false" >> "${GITHUB_OUTPUT}"
+            echo "No version change (${NEW}); skipping release branch update."
+          fi
+
+      - name: Configure git identity
+        if: steps.version.outputs.bumped == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Tag version on main
+        if: >-
+          steps.version.outputs.bumped == 'true' &&
+          github.event_name == 'push' &&
+          github.ref == 'refs/heads/main'
+        run: |
+          TAG="v${{ steps.version.outputs.version }}"
+          if git rev-parse "${TAG}" >/dev/null 2>&1; then
+            echo "Tag ${TAG} already exists."
+          else
+            git tag "${TAG}" "${{ github.sha }}"
+            git push origin "${TAG}"
+            echo "Created tag ${TAG} at ${{ github.sha }}"
+          fi
+
       - name: Remove research-only directories and files
+        if: steps.version.outputs.bumped == 'true'
         run: |
           rm -rf notebooks/
           rm -rf data/
@@ -44,16 +100,32 @@ jobs:
           rm -rf .cursor/
           rm -f .codiumignore
 
-      - name: Configure git identity
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
       - name: Commit stripped tree
+        if: steps.version.outputs.bumped == 'true'
         run: |
           git add -A
           git commit -m "release: rebuild from main (${{ github.sha }})" || echo "Nothing to commit"
 
       - name: Force-push to release branch
+        if: steps.version.outputs.bumped == 'true'
         run: |
           git push origin HEAD:release --force
+
+      - name: Create GitHub Release
+        if: steps.version.outputs.bumped == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            TAG="v${{ steps.version.outputs.version }}"
+          else
+            TAG="${{ github.ref_name }}"
+          fi
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "Release ${TAG} already exists."
+          else
+            gh release create "${TAG}" \
+              --title "${TAG}" \
+              --generate-notes \
+              --target "${{ github.sha }}"
+          fi

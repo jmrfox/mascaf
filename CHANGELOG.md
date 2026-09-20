@@ -10,6 +10,37 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ---
 
+## [1.2.1] — 2026-09-19
+
+### Added
+
+- `FittingOptimizer` / `FittingOptimizerOptions`: search
+  ``max_edge_length / mesh_bbox_diagonal``, fit a cable model, scale radii to
+  mesh surface area, and pick the largest fraction within an indifference band
+  of the best absolute relative volume error.
+- `mascaf.fit_oracle` (`FitFeatures`, heuristic fit-parameter suggestions from
+  mesh thickness plus skeleton topology) as starting values for cable fitting
+  and basis optimization.
+- `mascaf.shape_diameter` (`ThicknessSummary`, mesh shape-diameter / local
+  thickness summaries) for radius-scale proxies when skeletons have no radii.
+- Configurable branch-overlap constants ``overlap_scaling_area`` (``C_A``,
+  default ``4``) and ``overlap_scaling_volume`` (``C_V``, default ``8/3``) on
+  morphology volume/area metrics, radius scaling, validation comparisons, and
+  the fitting optimizer — the defaults are the overlap constants for two
+  cylinders intersecting perpendicularly.
+
+### Changed
+
+- Branch-point overlap corrections subtract ``C_A * r^2`` (area) and
+  ``C_V * r^3`` (volume) per extra incident edge, instead of the previous
+  quarter-sphere / half-ball ``π`` factors.
+- Pushing a version bump on ``main`` tags ``v{version}``, rebuilds the
+  stripped ``release`` branch, and creates a GitHub Release. Manual workflow
+  dispatch rebuilds ``release`` and creates the GitHub Release for the current
+  version if that tag already exists and the release is missing.
+
+---
+
 ## [1.2.0] — 2026-07-27
 
 ### Added
