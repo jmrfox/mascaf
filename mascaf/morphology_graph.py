@@ -16,6 +16,10 @@ from swctools import SWCModel, FrustaSet, plot_model
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
+# Overlap constants for two cylinders intersecting perpendicularly.
+DEFAULT_OVERLAP_SCALING_AREA = 4.0
+DEFAULT_OVERLAP_SCALING_VOLUME = 8.0 / 3.0
+
 
 @dataclass
 class Junction:
@@ -411,7 +415,11 @@ class MorphologyGraph(Graph3D):
 
         return swc_model
 
-    def compute_volume(self, account_for_overlaps: bool = False) -> float:
+    def compute_volume(
+        self,
+        account_for_overlaps: bool = False,
+        overlap_scaling_volume: float = DEFAULT_OVERLAP_SCALING_VOLUME,
+    ) -> float:
         """Compute total volume of the morphology as sum of frustum segments.
 
         Each edge represents a truncated cone (frustum) connecting two nodes.
@@ -419,14 +427,19 @@ class MorphologyGraph(Graph3D):
         where h is the length and r1, r2 are the radii at the endpoints.
 
         For nodes with degree > 2 (branch points), overlap correction is
-        applied by subtracting half a ball volume per edge beyond 2.
+        applied by subtracting ``overlap_scaling_volume * r^3`` per edge
+        beyond 2. The default ``overlap_scaling_volume`` (8/3) is the overlap
+        constant for two cylinders intersecting perpendicularly.
 
         Parameters
         ----------
         account_for_overlaps : bool, default False
             If True, subtract branch-point overlap corrections from the naive
-            frustum sum (half a ball volume per edge beyond two at each
-            junction).
+            frustum sum (``overlap_scaling_volume * r^3`` per edge beyond two
+            at each junction).
+        overlap_scaling_volume : float, default 8/3
+            Volume overlap constant ``C_V`` in ``C_V * r^3``. Default is the
+            overlap constant for two cylinders intersecting perpendicularly.
 
         Returns
         -------
@@ -440,10 +453,17 @@ class MorphologyGraph(Graph3D):
         >>> volume = graph.compute_volume()
         """
         return self._metric_at_uniform_radius_scale(
-            1.0, metric="volume", account_for_overlaps=account_for_overlaps
+            1.0,
+            metric="volume",
+            account_for_overlaps=account_for_overlaps,
+            overlap_scaling_volume=overlap_scaling_volume,
         )
 
-    def compute_surface_area(self, account_for_overlaps: bool = False) -> float:
+    def compute_surface_area(
+        self,
+        account_for_overlaps: bool = False,
+        overlap_scaling_area: float = DEFAULT_OVERLAP_SCALING_AREA,
+    ) -> float:
         """Compute total lateral surface area of the morphology.
 
         Each edge represents a truncated cone (frustum) connecting two nodes.
@@ -452,13 +472,19 @@ class MorphologyGraph(Graph3D):
 
         End caps are added for terminal nodes (degree 1).
         For nodes with degree > 2 (branch points), overlap correction is applied
-        by subtracting quarter of a ball surface area per edge beyond 2.
+        by subtracting ``overlap_scaling_area * r^2`` per edge beyond 2. The
+        default ``overlap_scaling_area`` (4) is the overlap constant for two
+        cylinders intersecting perpendicularly.
 
         Parameters
         ----------
         account_for_overlaps : bool, default False
             If True, subtract branch-point overlap corrections from the naive
-            sum (quarter of a ball surface area per edge beyond two at each junction).
+            sum (``overlap_scaling_area * r^2`` per edge beyond two at each
+            junction).
+        overlap_scaling_area : float, default 4
+            Area overlap constant ``C_A`` in ``C_A * r^2``. Default is the
+            overlap constant for two cylinders intersecting perpendicularly.
 
         Returns
         -------
@@ -472,7 +498,10 @@ class MorphologyGraph(Graph3D):
         >>> area = graph.compute_surface_area()
         """
         return self._metric_at_uniform_radius_scale(
-            1.0, metric="surface_area", account_for_overlaps=account_for_overlaps
+            1.0,
+            metric="surface_area",
+            account_for_overlaps=account_for_overlaps,
+            overlap_scaling_area=overlap_scaling_area,
         )
 
     def _metric_at_uniform_radius_scale(
@@ -481,6 +510,8 @@ class MorphologyGraph(Graph3D):
         *,
         metric: str,
         account_for_overlaps: bool,
+        overlap_scaling_area: float = DEFAULT_OVERLAP_SCALING_AREA,
+        overlap_scaling_volume: float = DEFAULT_OVERLAP_SCALING_VOLUME,
     ) -> float:
         """Return SA or volume if every node radius were multiplied by ``k`` (read-only)."""
         k = float(k)
@@ -498,7 +529,7 @@ class MorphologyGraph(Graph3D):
                 if degree > 2 and account_for_overlaps:
                     r = self.nodes[node_id]["radius"] * k
                     num_overlaps = degree - 2
-                    overlap_volume = np.pi * r**3 / 3.0
+                    overlap_volume = overlap_scaling_volume * r**3
                     total_volume -= num_overlaps * overlap_volume
             return float(total_volume)
 
@@ -524,7 +555,7 @@ class MorphologyGraph(Graph3D):
                 total_area += np.pi * r**2
             elif degree > 2 and account_for_overlaps:
                 num_overlaps = degree - 2
-                overlap_area = np.pi * r**2
+                overlap_area = overlap_scaling_area * r**2
                 total_area -= num_overlaps * overlap_area
 
         return float(total_area)
@@ -535,6 +566,8 @@ class MorphologyGraph(Graph3D):
         *,
         metric: str,
         account_for_overlaps: bool,
+        overlap_scaling_area: float = DEFAULT_OVERLAP_SCALING_AREA,
+        overlap_scaling_volume: float = DEFAULT_OVERLAP_SCALING_VOLUME,
         rtol: float = 1e-9,
         atol: float = 1e-12,
     ) -> float:
@@ -542,7 +575,11 @@ class MorphologyGraph(Graph3D):
 
         def m_at(kk: float) -> float:
             return self._metric_at_uniform_radius_scale(
-                kk, metric=metric, account_for_overlaps=account_for_overlaps
+                kk,
+                metric=metric,
+                account_for_overlaps=account_for_overlaps,
+                overlap_scaling_area=overlap_scaling_area,
+                overlap_scaling_volume=overlap_scaling_volume,
             )
 
         def residual(kk: float) -> float:
@@ -613,6 +650,8 @@ class MorphologyGraph(Graph3D):
         mesh,
         metric: str = "surface_area",
         account_for_overlaps: bool = False,
+        overlap_scaling_area: float = DEFAULT_OVERLAP_SCALING_AREA,
+        overlap_scaling_volume: float = DEFAULT_OVERLAP_SCALING_VOLUME,
     ) -> float:
         """Scale all radii to match the mesh's surface area or volume.
 
@@ -636,6 +675,12 @@ class MorphologyGraph(Graph3D):
             If True, subtract branch-point overlap corrections when computing
             the morphology's surface area or volume (same as for
             :meth:`compute_surface_area` / :meth:`compute_volume`).
+        overlap_scaling_area : float, default 4
+            Area overlap constant ``C_A`` in ``C_A * r^2``. Default is the
+            overlap constant for two cylinders intersecting perpendicularly.
+        overlap_scaling_volume : float, default 8/3
+            Volume overlap constant ``C_V`` in ``C_V * r^3``. Default is the
+            overlap constant for two cylinders intersecting perpendicularly.
 
         Returns
         -------
@@ -680,14 +725,16 @@ class MorphologyGraph(Graph3D):
             if target_value <= 0.0:
                 raise ValueError("Mesh has zero or negative surface area")
             current_value = self.compute_surface_area(
-                account_for_overlaps=account_for_overlaps
+                account_for_overlaps=account_for_overlaps,
+                overlap_scaling_area=overlap_scaling_area,
             )
         else:  # volume
             target_value = float(mesh_obj.volume)
             if target_value <= 0.0:
                 raise ValueError("Mesh has zero or negative volume")
             current_value = self.compute_volume(
-                account_for_overlaps=account_for_overlaps
+                account_for_overlaps=account_for_overlaps,
+                overlap_scaling_volume=overlap_scaling_volume,
             )
 
         if current_value <= 0.0:
@@ -699,6 +746,8 @@ class MorphologyGraph(Graph3D):
             target_value,
             metric=metric,
             account_for_overlaps=account_for_overlaps,
+            overlap_scaling_area=overlap_scaling_area,
+            overlap_scaling_volume=overlap_scaling_volume,
         )
 
         # Apply scaling to all node radii

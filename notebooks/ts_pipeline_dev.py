@@ -79,7 +79,7 @@ def get_ts_pipeline_params(idx: int) -> dict:
 pdf_scale = 2
 
 # %%
-spine_idx = 2
+spine_idx = 1
 params = get_ts_pipeline_params(spine_idx)
 
 mesh_path = f"../data/mesh/processed/{params['object_name']}.obj"

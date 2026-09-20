@@ -11,7 +11,11 @@ from scipy.optimize import minimize_scalar
 
 from .cable_fitting import CableFitter, FitOptions
 from .mesh import MeshManager
-from .morphology_graph import MorphologyGraph
+from .morphology_graph import (
+    DEFAULT_OVERLAP_SCALING_AREA,
+    DEFAULT_OVERLAP_SCALING_VOLUME,
+    MorphologyGraph,
+)
 from .skeleton import SkeletonGraph
 
 logger = logging.getLogger(__name__)
@@ -26,10 +30,16 @@ class FittingOptimizerOptions:
     fits a cable model, scales radii to match mesh surface area, then records
     absolute relative volume error. Among trials within an indifference band of
     the best volume error, the largest fraction is selected.
+
+    ``overlap_scaling_area`` and ``overlap_scaling_volume`` default to the
+    overlap constants for two cylinders intersecting perpendicularly
+    (``C_A = 4``, ``C_V = 8/3``).
     """
 
     fraction_bounds: Tuple[float, float] = (0.02, 0.2)
     account_for_overlaps: bool = False
+    overlap_scaling_area: float = DEFAULT_OVERLAP_SCALING_AREA
+    overlap_scaling_volume: float = DEFAULT_OVERLAP_SCALING_VOLUME
     xatol: float = 1e-3
     maxiter: int = 25
     volume_error_rel_tol: float = 0.05
@@ -221,9 +231,12 @@ class FittingOptimizer:
             mesh_obj,
             metric="surface_area",
             account_for_overlaps=self.options.account_for_overlaps,
+            overlap_scaling_area=self.options.overlap_scaling_area,
+            overlap_scaling_volume=self.options.overlap_scaling_volume,
         )
         morph_volume = morph.compute_volume(
-            account_for_overlaps=self.options.account_for_overlaps
+            account_for_overlaps=self.options.account_for_overlaps,
+            overlap_scaling_volume=self.options.overlap_scaling_volume,
         )
         volume_relative_error = abs(morph_volume - mesh_volume) / mesh_volume
         return FittingEvalRecord(

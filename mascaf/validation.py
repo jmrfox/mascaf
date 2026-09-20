@@ -14,7 +14,11 @@ from typing import Union
 import trimesh
 
 from .mesh import MeshManager
-from .morphology_graph import MorphologyGraph
+from .morphology_graph import (
+    DEFAULT_OVERLAP_SCALING_AREA,
+    DEFAULT_OVERLAP_SCALING_VOLUME,
+    MorphologyGraph,
+)
 from .skeleton import SkeletonGraph
 
 logger = logging.getLogger(__name__)
@@ -134,7 +138,11 @@ class Validation:
             f")"
         )
 
-    def compare_volumes(self, account_for_overlaps: bool = False) -> dict:
+    def compare_volumes(
+        self,
+        account_for_overlaps: bool = False,
+        overlap_scaling_volume: float = DEFAULT_OVERLAP_SCALING_VOLUME,
+    ) -> dict:
         """
         Compare total volume between mesh and morphology model.
 
@@ -146,6 +154,9 @@ class Validation:
         account_for_overlaps : bool, default False
             If True, subtract branch-point overlap corrections in the morphology
             volume (see :meth:`MorphologyGraph.compute_volume`).
+        overlap_scaling_volume : float, default 8/3
+            Volume overlap constant ``C_V`` in ``C_V * r^3``. Default is the
+            overlap constant for two cylinders intersecting perpendicularly.
 
         Returns
         -------
@@ -170,7 +181,8 @@ class Validation:
 
         # Calculate morphology volume using MorphologyGraph method
         morphology_volume = self.morphology.compute_volume(
-            account_for_overlaps=account_for_overlaps
+            account_for_overlaps=account_for_overlaps,
+            overlap_scaling_volume=overlap_scaling_volume,
         )
 
         # Calculate comparison metrics
@@ -186,7 +198,11 @@ class Validation:
             "relative_error": rel_error,
         }
 
-    def compare_surface_areas(self, account_for_overlaps: bool = False) -> dict:
+    def compare_surface_areas(
+        self,
+        account_for_overlaps: bool = False,
+        overlap_scaling_area: float = DEFAULT_OVERLAP_SCALING_AREA,
+    ) -> dict:
         """
         Compare total surface area between mesh and morphology model.
 
@@ -199,6 +215,9 @@ class Validation:
         account_for_overlaps : bool, default False
             If True, subtract branch-point overlap corrections in the morphology
             surface area (see :meth:`MorphologyGraph.compute_surface_area`).
+        overlap_scaling_area : float, default 4
+            Area overlap constant ``C_A`` in ``C_A * r^2``. Default is the
+            overlap constant for two cylinders intersecting perpendicularly.
 
         Returns
         -------
@@ -223,7 +242,8 @@ class Validation:
 
         # Calculate morphology surface area using MorphologyGraph method
         morphology_area = self.morphology.compute_surface_area(
-            account_for_overlaps=account_for_overlaps
+            account_for_overlaps=account_for_overlaps,
+            overlap_scaling_area=overlap_scaling_area,
         )
 
         # Calculate comparison metrics
