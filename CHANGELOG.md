@@ -10,6 +10,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ---
 
+## [1.2.2] — 2026-09-27
+
+### Added
+
+- `Validation.full_validation()` accepts ``overlap_scaling_area`` and
+  ``overlap_scaling_volume`` and forwards them to the volume and surface-area
+  comparisons.
+
+---
+
 ## [1.2.1] — 2026-09-19
 
 ### Added

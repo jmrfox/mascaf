@@ -1,3 +1,13 @@
+# %% [markdown]
+# # TS pipeline
+#
+# Fit one spine from mesh and skeleton through basis optimization, radius estimation, and validation.
+
+# %% [markdown]
+# ## Imports
+#
+# Load MaSCaF fitting tools, SWC plotting, and logging.
+
 # %%
 import logging
 import os
@@ -21,17 +31,20 @@ from swctools import SWCModel, plot_model
 if TYPE_CHECKING:
     import plotly.graph_objects as go  # type: ignore
 
-logging.basicConfig(level=logging.WARNING)
+logging.basicConfig(level=logging.INFO)
 
 print("✅ Libraries imported successfully!")
 
 
+# %% [markdown]
+# ## Per-spine parameters
+#
+# Camera pose and figure size for each spine index. Maximum edge length and basis-optimizer options come from the fit oracle unless `max_edge_length_override` or `basis_overrides` is set (for example `{"n_rays": 24, "step_scale": 0.25}`). `pdf_scale` is the export resolution for the PDF figures below.
+
 # %%
-# per-spine parameters (camera / I/O). Mel + basis opts come from the fit oracle
-# unless you set manual overrides below.
 def get_ts_pipeline_params(idx: int) -> dict:
-    qst = 0.5  # for all
-    mcst = 5  # for all
+    qst = 0.5
+    mcst = 5
 
     fig_width = 800
     fig_height = 600
@@ -71,12 +84,27 @@ def get_ts_pipeline_params(idx: int) -> dict:
         "eye_coord": eye_coord,
         "fig_width": fig_width,
         "fig_height": fig_height,
-        # Optional manual overrides (None → use FitParameterOracle):
         "max_edge_length_override": None,
-        "basis_overrides": {},  # e.g. {"n_rays": 24, "step_scale": 0.25}
+        "basis_overrides": {},
     }
 
 pdf_scale = 2
+
+# %% [markdown]
+# ## Overlap scaling
+#
+# Branch-overlap constants passed to validation. These are 90% of the perpendicular-cylinder defaults (`C_A = 4`, `C_V = 8/3`).
+
+# %%
+rescale = 1.0
+OVERLAP_SCALING_AREA = 4.0 * rescale
+OVERLAP_SCALING_VOLUME = 8.0 / 3.0 * rescale
+
+
+# %% [markdown]
+# ## Load mesh and skeleton
+#
+# Load the processed mesh and MCF skeleton for the chosen spine, then take `max_edge_length` and basis-optimizer options from the fit oracle. The figures are the mesh alone and the mesh with the skeleton, written under `viz/`.
 
 # %%
 spine_idx = 1
@@ -118,7 +146,6 @@ print(
 fig_out_dir = f"../viz/ts{spine_idx}"
 os.makedirs(fig_out_dir, exist_ok=True)
 
-# FIGURE: mesh
 mesh_fig: "go.Figure" = mm.visualize_mesh_3d(skel=None, show_axes=False, title="")
 
 eye_coord = params["eye_coord"]
@@ -129,7 +156,7 @@ mesh_fig.update_layout(
             eye={"x": eye_coord[0], "y": eye_coord[1], "z": eye_coord[2]},
             projection=dict(type="perspective"),
         ),
-        aspectmode="data",  # 'cube', 'auto', 'manual'
+        aspectmode="data",
     )
 )
 mesh_fig.write_image(
@@ -142,7 +169,6 @@ mesh_fig.write_image(
 )
 mesh_fig.show()
 
-# FIGURE: mesh with skeleton
 mesh_skel_fig: "go.Figure" = mm.visualize_mesh_3d(
     skel=skeleton, show_axes=False, title=""
 )
@@ -152,7 +178,7 @@ mesh_skel_fig.update_layout(
             eye={"x": eye_coord[0], "y": eye_coord[1], "z": eye_coord[2]},
             projection=dict(type="perspective"),
         ),
-        aspectmode="data",  # 'cube', 'auto', 'manual'
+        aspectmode="data",
     )
 )
 mesh_skel_fig.write_image(
@@ -165,8 +191,12 @@ mesh_skel_fig.write_image(
 )
 mesh_skel_fig.show()
 
+# %% [markdown]
+# ## Basis optimization
+#
+# Resample the skeleton into a morphology basis and move nodes with `BasisOptimizer` before any radius fitting. The figure overlays the original basis (red) and the optimized basis (blue).
+
 # %%
-# Basis construction + optimization (before radius fitting)
 basis = MorphologyGraph.from_skeleton_graph_resample(
     skeleton,
     float(params["max_edge_length"]),
@@ -183,7 +213,6 @@ print("Basis optimization statistics:")
 for key, value in stats.items():
     print(f"  {key}: {value}")
 
-# FIGURE: original (red) vs optimized (blue) basis
 basis_opt_fig: "go.Figure" = mm.visualize_mesh_3d(
     skel=[basis, optimized_basis],
     show_axes=False,
@@ -211,8 +240,12 @@ basis_opt_fig.write_image(
 )
 basis_opt_fig.show()
 
+# %% [markdown]
+# ## Cable fitting
+#
+# Estimate node radii on the optimized basis with the equivalent-area strategy, write the SWC. The figure is the fitted morphology.
+
 # %%
-# Cable fitting: estimate radii on the optimized basis
 swc_out_dir = f"../data/swc/current/{polylines_name}"
 swc_filepath = f"{swc_out_dir}/TS{spine_idx}_mel{params['max_edge_length_tag']}.swc"
 
@@ -230,11 +263,7 @@ fit_options = FitOptions(
 morph = optimized_basis.copy()
 _compute_morphology_node_radii(morph, mm.mesh, fit_options)
 
-# write swc to file
 morph.to_swc_file(swc_filepath)
-# validation
-validator = Validation(mm, skeleton, morph)
-validator.full_validation()
 
 model = SWCModel.from_swc_file(swc_filepath)
 model.print_attributes(node_info=False, edge_info=False)
@@ -253,7 +282,7 @@ morph_fig.update_layout(
             eye={"x": eye_coord[0], "y": eye_coord[1], "z": eye_coord[2]},
             projection=dict(type="perspective"),
         ),
-        aspectmode="data",  # 'cube', 'auto', 'manual'
+        aspectmode="data",
     )
 )
 morph_filename = (
@@ -269,16 +298,29 @@ morph_fig.write_image(
 )
 morph_fig.show()
 
+# %% [markdown]
+# ### Validation without area fit
+
+# %%
+validator = Validation(mm, skeleton, morph)
+validator.full_validation(
+    overlap_scaling_area=OVERLAP_SCALING_AREA,
+    overlap_scaling_volume=OVERLAP_SCALING_VOLUME,
+)
+
+# %% [markdown]
+# ## Surface-area normalization
+#
+# Scale radii so the morphology surface area matches the mesh, without overlap correction.
+
 # %%
 morph.scale_radii_to_match_mesh(
     mm.mesh, metric="surface_area", account_for_overlaps=False
 )
 
-# save normalized to file
 swc_filepath = f"{swc_out_dir}/TS{spine_idx}_mel{params['max_edge_length_tag']}_norm.swc"
 morph.to_swc_file(swc_filepath)
 
-# load and plot
 swc_model = SWCModel.from_swc_file(swc_filepath)
 swc_model.print_attributes(node_info=False, edge_info=False)
 title = f"TS{spine_idx}_s{params['max_edge_length_tag']}"
@@ -296,7 +338,7 @@ norm_fig.update_layout(
             eye={"x": eye_coord[0], "y": eye_coord[1], "z": eye_coord[2]},
             projection=dict(type="perspective"),
         ),
-        aspectmode="data",  # 'cube', 'auto', 'manual'
+        aspectmode="data",
     )
 )
 norm_filename = (
@@ -312,14 +354,24 @@ norm_fig.write_image(
 )
 norm_fig.show()
 
-validator = Validation(mm, skeleton, morph)
-validator.full_validation()
-
 print(swc_filepath)
 
-# %%
-# compare morphology basis to original skeleton
+# %% [markdown]
+# ### Validation with area fit
 
+# %%
+validator = Validation(mm, skeleton, morph)
+validator.full_validation(
+    overlap_scaling_area=OVERLAP_SCALING_AREA,
+    overlap_scaling_volume=OVERLAP_SCALING_VOLUME,
+)
+
+# %% [markdown]
+# ## Morphology versus skeleton
+#
+# Overlay the normalized morphology (translucent) with the original skeleton points.
+
+# %%
 skel_pointset = skeleton.to_point_set()
 
 vs_fig: "go.Figure" = plot_model(
@@ -339,11 +391,12 @@ vs_fig.update_layout(
             eye={"x": eye_coord[0], "y": eye_coord[1], "z": eye_coord[2]},
             projection=dict(type="perspective"),
         ),
-        aspectmode="data",  # 'cube', 'auto', 'manual'
+        aspectmode="data",
     )
 )
 vs_filename = (
-    f"{fig_out_dir}/TS{spine_idx}_mel{params['max_edge_length_tag']}_" f"morph_vs_skel.pdf"
+    f"{fig_out_dir}/TS{spine_idx}_mel{params['max_edge_length_tag']}_"
+    f"morph_vs_skel.pdf"
 )
 vs_fig.write_image(
     vs_filename,
@@ -354,5 +407,3 @@ vs_fig.write_image(
     scale=pdf_scale,
 )
 vs_fig.show()
-
-# %%

@@ -259,12 +259,27 @@ class Validation:
             "relative_error": rel_error,
         }
 
-    def full_validation(self) -> None:
+    def full_validation(
+        self,
+        overlap_scaling_area: float = DEFAULT_OVERLAP_SCALING_AREA,
+        overlap_scaling_volume: float = DEFAULT_OVERLAP_SCALING_VOLUME,
+    ) -> None:
         """Run all validation checks and log comprehensive results.
 
         Compares volumes and surface areas (with and without branch-point
         overlap correction when branch vertices are present) and logs
         each result via the module logger at ``INFO`` level.
+
+        Parameters
+        ----------
+        overlap_scaling_area : float, default 4
+            Area overlap constant ``C_A`` in ``C_A * r^2``, forwarded to
+            :meth:`compare_surface_areas`. Default is the overlap constant
+            for two cylinders intersecting perpendicularly.
+        overlap_scaling_volume : float, default 8/3
+            Volume overlap constant ``C_V`` in ``C_V * r^3``, forwarded to
+            :meth:`compare_volumes`. Default is the overlap constant for
+            two cylinders intersecting perpendicularly.
 
         Returns
         -------
@@ -282,9 +297,13 @@ class Validation:
 
         overlap_flags = [False, True] if has_branch_vertices else [False]
         for account_for_overlaps in overlap_flags:
-            vol_result = self.compare_volumes(account_for_overlaps=account_for_overlaps)
+            vol_result = self.compare_volumes(
+                account_for_overlaps=account_for_overlaps,
+                overlap_scaling_volume=overlap_scaling_volume,
+            )
             area_result = self.compare_surface_areas(
-                account_for_overlaps=account_for_overlaps
+                account_for_overlaps=account_for_overlaps,
+                overlap_scaling_area=overlap_scaling_area,
             )
             logger.info(
                 f"Validation Results, account_for_overlaps={account_for_overlaps}:"
