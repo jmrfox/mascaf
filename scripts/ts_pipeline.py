@@ -19,9 +19,7 @@ import traceback
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-from scipy.spatial.transform import Rotation
-from swctools import SWCModel, plot_model
+from swctools import SWCModel
 
 from mascaf import (
     BasisOptimizer,
@@ -32,12 +30,14 @@ from mascaf import (
     SkeletonGraph,
     Validation,
     suggest_fit_parameters,
+    visualize_cable_3d,
+    visualize_mesh_3d,
 )
 from mascaf.cable_fitting import _compute_morphology_node_radii
 from mascaf.logging_config import configure_logging
 
 logger = logging.getLogger(__name__)
-_PIPELINE_STEPS = 8
+_PIPELINE_STEPS = 9
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _MESH_DIR = _REPO_ROOT / "data" / "mesh" / "processed"
@@ -73,8 +73,6 @@ _DEFAULT_OPTIMIZER = dict(
 
 SPINES: dict[int, dict[str, Any]] = {
     1: {
-        "rotation_deg": [0, -30, 20],
-        "zoom": 1.0,
         "qst": 0.5,
         "mcst": 5,
         "max_edge_length_fraction": 0.1,
@@ -82,8 +80,6 @@ SPINES: dict[int, dict[str, Any]] = {
         **_DEFAULT_OPTIMIZER,
     },
     2: {
-        "rotation_deg": [-40, 0, 0],
-        "zoom": 1.0,
         "qst": 0.5,
         "mcst": 5,
         "max_edge_length_fraction": 0.1,
@@ -91,8 +87,6 @@ SPINES: dict[int, dict[str, Any]] = {
         **_DEFAULT_OPTIMIZER,
     },
     3: {
-        "rotation_deg": [60, 0, 20],
-        "zoom": 1.0,
         "qst": 0.5,
         "mcst": 5,
         "max_edge_length_fraction": 0.1,
@@ -100,8 +94,6 @@ SPINES: dict[int, dict[str, Any]] = {
         **_DEFAULT_OPTIMIZER,
     },
     4: {
-        "rotation_deg": [-30, 40, 50],
-        "zoom": 1.0,
         "qst": 0.5,
         "mcst": 5,
         "max_edge_length_fraction": 0.1,
@@ -109,8 +101,6 @@ SPINES: dict[int, dict[str, Any]] = {
         **_DEFAULT_OPTIMIZER,
     },
     21: {
-        "rotation_deg": [0, 30, 95],
-        "zoom": 1.0,
         "qst": 0.5,
         "mcst": 5,
         "max_edge_length_fraction": 0.1,
@@ -118,8 +108,6 @@ SPINES: dict[int, dict[str, Any]] = {
         **_DEFAULT_OPTIMIZER,
     },
     24: {
-        "rotation_deg": [0, 0, 0],
-        "zoom": 1.0,
         "qst": 0.5,
         "mcst": 5,
         "max_edge_length_fraction": 0.1,
@@ -127,8 +115,6 @@ SPINES: dict[int, dict[str, Any]] = {
         **_DEFAULT_OPTIMIZER,
     },
     48: {
-        "rotation_deg": [0, 0, 0],
-        "zoom": 1.0,
         "qst": 0.5,
         "mcst": 5,
         "max_edge_length_fraction": 0.1,
@@ -136,8 +122,6 @@ SPINES: dict[int, dict[str, Any]] = {
         **_DEFAULT_OPTIMIZER,
     },
     67: {
-        "rotation_deg": [0, 0, 0],
-        "zoom": 1.0,
         "qst": 0.5,
         "mcst": 5,
         "max_edge_length_fraction": 0.1,
@@ -145,8 +129,6 @@ SPINES: dict[int, dict[str, Any]] = {
         **_DEFAULT_OPTIMIZER,
     },
     76: {
-        "rotation_deg": [0, 0, 0],
-        "zoom": 1.0,
         "qst": 0.5,
         "mcst": 5,
         "max_edge_length_fraction": 0.1,
@@ -154,11 +136,6 @@ SPINES: dict[int, dict[str, Any]] = {
         **_DEFAULT_OPTIMIZER,
     },
 }
-
-
-def _eye_coord(cfg: dict[str, Any]) -> np.ndarray:
-    rot = Rotation.from_euler("xyz", cfg["rotation_deg"], degrees=True)
-    return rot.apply(np.array([1.0, 1.0, 1.0])) * float(cfg["zoom"])
 
 
 def _optimizer_options(cfg: dict[str, Any]) -> BasisOptimizerOptions:
@@ -203,18 +180,6 @@ def _log_geom_metrics(label: str, metrics: dict[str, float]) -> None:
     )
 
 
-def _apply_camera(fig: Any, eye: np.ndarray) -> None:
-    fig.update_layout(
-        scene=dict(
-            camera=dict(
-                eye={"x": float(eye[0]), "y": float(eye[1]), "z": float(eye[2])},
-                projection=dict(type="perspective"),
-            ),
-            aspectmode="data",
-        )
-    )
-
-
 def _write_figure(fig: Any, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.write_image(
@@ -256,7 +221,6 @@ def run_spine(
     """Run the full pipeline for one spine; return metrics row."""
     object_name = f"TS{idx}"
     prefix = f"ts{idx}"
-    eye = _eye_coord(cfg)
     qst = float(cfg["qst"])
     mcst = int(cfg["mcst"])
 
@@ -350,12 +314,25 @@ def run_spine(
     )
 
     _pipeline_step(2, "Export mesh figures")
-    mesh_fig = mm.visualize_mesh_3d(skel=None, show_axes=False, title="")
-    _apply_camera(mesh_fig, eye)
+    mesh_fig, camera = visualize_mesh_3d(
+        mm,
+        skel=None,
+        show_axes=False,
+        title="",
+        orientation="horizontal",
+        return_camera=True,
+        eye_scale=1.0,
+    )
     _write_figure(mesh_fig, _OUT_DIR / f"{prefix}_mesh.pdf")
 
-    mesh_skel_fig = mm.visualize_mesh_3d(skel=skeleton, show_axes=False, title="")
-    _apply_camera(mesh_skel_fig, eye)
+    mesh_skel_fig = visualize_mesh_3d(
+        mm,
+        skel=skeleton,
+        show_axes=False,
+        title="",
+        orientation="horizontal",
+        camera=camera,
+    )
     _write_figure(mesh_skel_fig, _OUT_DIR / f"{prefix}_mesh_skel.pdf")
 
     _pipeline_step(3, "Resample skeleton to morphology basis")
@@ -378,15 +355,17 @@ def run_spine(
     stats = optimizer.get_optimization_stats()
     logger.debug("Optimizer stats: %s", stats)
 
-    basis_opt_fig = mm.visualize_mesh_3d(
+    basis_opt_fig = visualize_mesh_3d(
+        mm,
         skel=[basis, optimized_basis],
         show_axes=False,
         title="",
+        orientation="horizontal",
+        camera=camera,
         skel_color=["red", "blue"],
         skel_line_width=2.0,
         skel_marker_size=1.0,
     )
-    _apply_camera(basis_opt_fig, eye)
     _write_figure(basis_opt_fig, _OUT_DIR / f"{prefix}_skel_opt.pdf")
 
     _pipeline_step(5, "Fit radii and write SWC")
@@ -410,24 +389,32 @@ def run_spine(
     morph.to_swc_file(str(swc_path))
     logger.info("Wrote %s", swc_path.relative_to(_REPO_ROOT))
 
-    _pipeline_step(6, "Pre-normalization validation")
+    _pipeline_step(6, "Validation after cable fitting")
     pre_validator = Validation(mm, skeleton, morph)
     pre_metrics = _geom_metrics(pre_validator)
-    _log_geom_metrics("pre-norm", pre_metrics)
+    _log_geom_metrics("post-fit", pre_metrics)
 
     model = SWCModel.from_swc_file(str(swc_path))
-    morph_fig = plot_model(
-        swc_model=model,
+    morph_fig = visualize_cable_3d(
+        model,
         slider=False,
         title="",
         width=PLOT_WIDTH,
         height=PLOT_HEIGHT,
         show_axes=False,
+        orientation="horizontal",
+        camera=camera,
     )
-    _apply_camera(morph_fig, eye)
     _write_figure(morph_fig, _OUT_DIR / f"{prefix}_swc.pdf")
 
-    _pipeline_step(7, "Normalize radii to match mesh surface area")
+    _pipeline_step(7, "Extend terminals")
+    n_extended = morph.extend_terminals(length_scale=0.5, radius_fraction=0.5)
+    logger.info("Extended %d terminals", n_extended)
+    ext_validator = Validation(mm, skeleton, morph)
+    ext_metrics = _geom_metrics(ext_validator)
+    _log_geom_metrics("post-extend", ext_metrics)
+
+    _pipeline_step(8, "Normalize radii to match mesh surface area")
     morph.scale_radii_to_match_mesh(
         mm.mesh, metric="surface_area", account_for_overlaps=False
     )
@@ -439,31 +426,33 @@ def run_spine(
     _log_geom_metrics("post-norm", post_metrics)
 
     swc_model = SWCModel.from_swc_file(str(swc_norm_path))
-    norm_fig = plot_model(
-        swc_model=swc_model,
+    norm_fig = visualize_cable_3d(
+        swc_model,
         slider=False,
         title="",
         width=PLOT_WIDTH,
         height=PLOT_HEIGHT,
         show_axes=False,
+        orientation="horizontal",
+        camera=camera,
     )
-    _apply_camera(norm_fig, eye)
     _write_figure(norm_fig, _OUT_DIR / f"{prefix}_swc_norm.pdf")
 
-    _pipeline_step(8, "Export comparison figures")
+    _pipeline_step(9, "Export comparison figures")
     skel_pointset = skeleton.to_point_set()
-    vs_fig = plot_model(
-        swc_model=swc_model,
+    vs_fig = visualize_cable_3d(
+        swc_model,
         opacity=0.2,
         title="",
         width=PLOT_WIDTH,
         height=PLOT_HEIGHT,
         show_axes=False,
+        orientation="horizontal",
+        camera=camera,
         point_set=skel_pointset,
         point_color="red",
         point_size=model_length * 0.0015,
     )
-    _apply_camera(vs_fig, eye)
     _write_figure(vs_fig, _OUT_DIR / f"{prefix}_swc_vs_skel.pdf")
 
     row: dict[str, Any] = {
@@ -481,6 +470,8 @@ def run_spine(
     }
     for k, v in pre_metrics.items():
         row[f"pre_{k}"] = v
+    for k, v in ext_metrics.items():
+        row[f"ext_{k}"] = v
     for k, v in post_metrics.items():
         row[f"post_{k}"] = v
 
@@ -529,6 +520,7 @@ def write_validation_report(rows: list[dict[str, Any]], path: Path) -> str:
 
     any_branches = any(
         float(r.get("pre_has_branches", 0)) > 0.5
+        or float(r.get("ext_has_branches", 0)) > 0.5
         or float(r.get("post_has_branches", 0)) > 0.5
         for r in rows
     )
@@ -561,6 +553,10 @@ def write_validation_report(rows: list[dict[str, Any]], path: Path) -> str:
         "pre_vol_rel_err",
         "pre_area_ratio",
         "pre_area_rel_err",
+        "ext_vol_ratio",
+        "ext_vol_rel_err",
+        "ext_area_ratio",
+        "ext_area_rel_err",
         "post_vol_ratio",
         "post_vol_rel_err",
         "post_area_ratio",
@@ -573,6 +569,10 @@ def write_validation_report(rows: list[dict[str, Any]], path: Path) -> str:
             _fmt(r.get("pre_vol_rel_err_raw"), pct=True),
             _fmt(r.get("pre_area_ratio_raw")),
             _fmt(r.get("pre_area_rel_err_raw"), pct=True),
+            _fmt(r.get("ext_vol_ratio_raw")),
+            _fmt(r.get("ext_vol_rel_err_raw"), pct=True),
+            _fmt(r.get("ext_area_ratio_raw")),
+            _fmt(r.get("ext_area_rel_err_raw"), pct=True),
             _fmt(r.get("post_vol_ratio_raw")),
             _fmt(r.get("post_vol_rel_err_raw"), pct=True),
             _fmt(r.get("post_area_ratio_raw")),
@@ -600,6 +600,8 @@ def write_validation_report(rows: list[dict[str, Any]], path: Path) -> str:
             "spine",
             "pre_vol_ratio_ov",
             "pre_area_ratio_ov",
+            "ext_vol_ratio_ov",
+            "ext_area_ratio_ov",
             "post_vol_ratio_ov",
             "post_area_ratio_ov",
         ]
@@ -608,6 +610,8 @@ def write_validation_report(rows: list[dict[str, Any]], path: Path) -> str:
                 str(r["spine"]),
                 _fmt(r.get("pre_vol_ratio_ov", r.get("pre_vol_ratio_raw"))),
                 _fmt(r.get("pre_area_ratio_ov", r.get("pre_area_ratio_raw"))),
+                _fmt(r.get("ext_vol_ratio_ov", r.get("ext_vol_ratio_raw"))),
+                _fmt(r.get("ext_area_ratio_ov", r.get("ext_area_ratio_raw"))),
                 _fmt(r.get("post_vol_ratio_ov", r.get("post_vol_ratio_raw"))),
                 _fmt(r.get("post_area_ratio_ov", r.get("post_area_ratio_raw"))),
             ]

@@ -65,12 +65,15 @@ print(f"Found {len(outside_ids)} vertices outside!")
 # ## Visualize mesh with initial basis
 
 # %%
-fig = mm.visualize_mesh_3d(
-    skel=basis, 
-    show_axes=False, 
-    title="Initial basis",
+fig, camera = mm.visualize_mesh_3d(
+    skel=basis,
+    show_axes=False,
+    title="",
+    orientation="horizontal",
+    return_camera=True,
     skel_marker_size=2.0,
-    skel_line_width=2.0)
+    skel_line_width=2.0,
+)
 fig.show()
 
 # %% [markdown]
@@ -108,12 +111,14 @@ for key, value in stats.items():
 
 # %%
 fig = mm.visualize_mesh_3d(
-    skel=[basis, optimized], 
-    show_axes=False, 
-    title="Optimized basis",
+    skel=[basis, optimized],
+    show_axes=False,
+    title="",
+    orientation="horizontal",
+    camera=camera,
     skel_marker_size=2.0,
     skel_line_width=2.0,
-    skel_color=['red', 'blue']
+    skel_color=["red", "blue"],
 )
 fig.show()
 

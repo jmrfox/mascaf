@@ -25,6 +25,7 @@ logging.basicConfig(level=logging.INFO)
 
 print("✅ Libraries imported successfully!")
 
+
 # %% [markdown]
 # ## Load mesh and skeleton
 #
@@ -55,7 +56,6 @@ for line in suggested.rationale:
 
 params = suggested
 
-params.basis_optimizer_options.max_iterations = 2
 mel_tag = f"{params.max_edge_length:0.2f}"
 
 print(params)
@@ -108,6 +108,9 @@ mesh_skel_fig.show()
 # ## Basis optimization
 #
 # Resample the skeleton into a morphology basis and move nodes with `BasisOptimizer` before any radius fitting. The figure overlays the original basis (red) and the optimized basis (blue).
+
+# %%
+print(params.basis_optimizer_options)
 
 # %%
 basis = MorphologyGraph.from_skeleton_graph_resample(
@@ -198,19 +201,26 @@ morph_fig.write_image(
 morph_fig.show()
 
 # %% [markdown]
-# ### Validation without area fit
+# ### Validation after cable fitting
 
 # %%
 validator = Validation(mm, skeleton, morph)
 validator.full_validation()
 
 # %% [markdown]
-# ## Terminal extension & surface-area normalization
-#
-# First we extend terminals, then scale radii so the morphology surface area matches the mesh, without overlap correction.
+# ## Terminal extension
 
 # %%
-morph.extend_terminals()
+morph.extend_terminals(length_scale=0.5, radius_fraction=0.5)
+validator = Validation(mm, skeleton, morph)
+validator.full_validation()
+
+# %% [markdown]
+# ## Surface-area normalization
+#
+# Scale radii so the morphology surface area matches the mesh, without overlap correction.
+
+# %%
 morph.scale_radii_to_match_mesh(
     mm.mesh, metric="surface_area", account_for_overlaps=False
 )
@@ -289,3 +299,5 @@ vs_fig.show()
 
 # %%
 visualize_mesh_cable_3d(mm, skeleton, morph, eye_scale=0.6)
+
+# %%

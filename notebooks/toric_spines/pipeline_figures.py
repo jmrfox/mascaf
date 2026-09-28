@@ -1,10 +1,8 @@
 # %%
-from mascaf import *
-from swctools import SWCModel, FrustaSet, PointSet, plot_model
+from mascaf import MeshManager, SkeletonGraph, visualize_mesh_3d
 import logging
 
 logging.basicConfig(level=logging.INFO)
-import os
 
 print("✅ Libraries imported successfully!")
 
@@ -19,4 +17,12 @@ raw_skeleton = SkeletonGraph.from_txt(
     f"../../data/mcf_skeletons/{polylines_name}.polylines.txt"
 )
 raw_skeleton.prune_short_branches_inplace(min_length_percentile=20)
-mm.visualize_mesh_3d(skel=raw_skeleton)
+fig, _camera = visualize_mesh_3d(
+    mm,
+    skel=raw_skeleton,
+    show_axes=False,
+    title="",
+    orientation="horizontal",
+    return_camera=True,
+)
+fig.show()

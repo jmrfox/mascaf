@@ -8,9 +8,29 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+---
+
+## [1.3.0] — 2026-09-27
+
+### Added
+
+- `MorphologyGraph.extend_terminals` continues each branch tip by one segment.
+  Defaults approximate a spherical end cap by a cylinder of the same radius and
+  length.
+- Principal-axis cameras on `visualize_mesh_3d` and `visualize_cable_3d`
+  (`orientation`, `return_camera`) so mesh and cable figures share one view.
+
 ### Changed
 
-- Example meshes, skeletons, and SWC files moved from `mascaf.demo` to `data/demo`.
+- Example meshes, skeletons, and SWC files moved from `mascaf.demo` to
+  `data/demo`. Those files stay in the full repository. The stripped release
+  branch does not include `data/`.
+- Notebooks are grouped under `notebooks/demo_geometries/`,
+  `notebooks/other/`, and `notebooks/toric_spines/`.
+
+### Removed
+
+- The `mascaf.demo` package.
 
 ---
 

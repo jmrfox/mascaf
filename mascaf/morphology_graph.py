@@ -769,8 +769,8 @@ class MorphologyGraph(Graph3D):
         distance from the parent to the new terminal, is ``length_scale``
         times the parent radius (default one parent radius). The new tip
         radius is ``radius_fraction`` times that same parent radius (default
-        one half). The former tip becomes a continuation node, so the terminal
-        moves to the new node.
+        the full parent radius). The former tip becomes a continuation node,
+        so the terminal moves to the new node.
 
         Note that default values for length_scale and radius_fraction
         correspond to approximating a spherical end-cap of radius r by
