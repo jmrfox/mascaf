@@ -10,6 +10,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 import trimesh
 
+from .visualization import camera_from_points, coerce_camera, plotly_camera
+
 # Module-level logger
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
@@ -615,6 +617,9 @@ class MeshManager:
         height: int = 600,
         *,
         eye_scale: float = 1.25,
+        orientation: str = "horizontal",
+        camera: Optional[dict] = None,
+        return_camera: bool = False,
         skel: Optional[Union["SkeletonGraph", List["SkeletonGraph"]]] = None,
         skel_color: Union[str, List[str]] = "crimson",
         skel_line_width: float = 3.0,
@@ -637,9 +642,15 @@ class MeshManager:
             skel_marker_size: If ``None`` or ``0``, no node markers. A positive
                 value draws round markers at skeleton nodes (plotly marker size
                 / matplotlib scatter size).
+            orientation: ``"horizontal"`` lays the longest axis across the
+                screen. ``"vertical"`` stands that axis upright.
+            camera: Plotly scene camera ``{eye, up}`` to use instead of
+                computing one from this mesh. Returned by ``return_camera``.
+            return_camera: If True, return ``(figure, camera)``.
 
         Returns:
-            Figure object (backend-dependent) or None if visualization fails
+            Figure object, or ``(figure, camera)`` when ``return_camera`` is
+            True. None if visualization fails.
         """
         if backend == "auto":
             # Try plotly first, then fallback to matplotlib
@@ -655,15 +666,24 @@ class MeshManager:
                 except ImportError:
                     backend = "plotly"
 
+        if camera is None:
+            camera = plotly_camera(
+                np.asarray(self.mesh.vertices, dtype=float),
+                eye_scale=eye_scale,
+                orientation=orientation,
+            )
+        else:
+            camera = coerce_camera(camera)
+
         if backend == "plotly":
-            return self._visualize_mesh_plotly(
+            fig = self._visualize_mesh_plotly(
                 title,
                 color,
                 show_axes,
                 show_wireframe,
                 width,
                 height,
-                eye_scale=eye_scale,
+                camera=camera,
                 skel=skel,
                 skel_color=skel_color,
                 skel_line_width=skel_line_width,
@@ -671,7 +691,7 @@ class MeshManager:
                 skel_marker_size=skel_marker_size,
             )
         elif backend == "matplotlib":
-            return self._visualize_mesh_matplotlib(
+            fig = self._visualize_mesh_matplotlib(
                 title,
                 color,
                 show_axes,
@@ -680,9 +700,14 @@ class MeshManager:
                 skel_color=skel_color,
                 skel_line_width=skel_line_width,
                 skel_marker_size=skel_marker_size,
+                orientation=orientation,
+                camera=camera,
             )
         else:
             raise ValueError(f"Unknown backend: {backend}")
+        if return_camera:
+            return fig, camera
+        return fig
 
     def _visualize_mesh_plotly(
         self,
@@ -693,7 +718,7 @@ class MeshManager:
         width=800,
         height=600,
         *,
-        eye_scale: float = 1.25,
+        camera: Optional[dict] = None,
         skel: Optional[Union["SkeletonGraph", List["SkeletonGraph"]]] = None,
         skel_color: Union[str, List[str]] = "crimson",
         skel_line_width: float = 3.0,
@@ -823,7 +848,6 @@ class MeshManager:
                         )
 
             # Configure layout
-            _e = float(eye_scale)
             fig.update_layout(
                 title=title,
                 autosize=False,
@@ -832,7 +856,7 @@ class MeshManager:
                 margin=dict(l=0, r=0, t=40, b=0),
                 scene=dict(
                     aspectmode="data",
-                    camera=dict(eye=dict(x=_e, y=_e, z=_e)),
+                    camera=camera,
                     xaxis=dict(visible=show_axes),
                     yaxis=dict(visible=show_axes),
                     zaxis=dict(visible=show_axes),
@@ -859,6 +883,8 @@ class MeshManager:
         skel_color: Union[str, List[str]] = "crimson",
         skel_line_width: float = 3.0,
         skel_marker_size: Optional[float] = None,
+        orientation: str = "horizontal",
+        camera: Optional[dict] = None,
     ):
         """Matplotlib-based mesh visualization with optional SkeletonGraph overlay."""
         try:
@@ -945,6 +971,21 @@ class MeshManager:
 
             if not show_axes:
                 ax.set_axis_off()
+
+            if camera is not None:
+                eye = camera["eye"]
+                toward = np.array(
+                    [float(eye["x"]), float(eye["y"]), float(eye["z"])], dtype=float
+                )
+                norm = float(np.linalg.norm(toward))
+                if norm > 0.0:
+                    toward = toward / norm
+            else:
+                toward, _up = camera_from_points(vertices, orientation=orientation)
+            ax.view_init(
+                elev=float(np.degrees(np.arcsin(np.clip(toward[2], -1.0, 1.0)))),
+                azim=float(np.degrees(np.arctan2(toward[1], toward[0]))),
+            )
 
             plt.tight_layout()
             return fig

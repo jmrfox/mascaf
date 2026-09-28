@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import os
 from pathlib import Path
-from typing import Any, Sequence, Union
+from typing import Any, Optional, Sequence, Union
 
 import matplotlib as mpl
 import matplotlib.colors as mcolors
@@ -115,7 +116,25 @@ def _pca_principal_frame(vertices_centered: np.ndarray) -> np.ndarray | None:
     )
     if float(np.linalg.det(p)) < 0.0:
         p[:, 2] *= -1.0
-    return p
+    return _stabilize_principal_frame(p)
+
+
+def _stabilize_principal_frame(principal: np.ndarray) -> np.ndarray:
+    """Lock SVD signs so a mesh and its centerline share one camera.
+
+    The singular vectors of a surface and of the curve inside it point along
+    the same axes, but NumPy's signs are independent. A sign flip of the two
+    shorter axes rotates the view 180 degrees about the long axis. The long
+    axis is kept with a positive component sum. The second axis is kept with
+    a negative component sum. The third axis is their cross product.
+    """
+    frame = np.array(principal, dtype=float, copy=True)
+    if float(frame[:, 0].sum()) < 0.0:
+        frame[:, 0] *= -1.0
+    if float(frame[:, 1].sum()) > 0.0:
+        frame[:, 1] *= -1.0
+    frame[:, 2] = np.cross(frame[:, 0], frame[:, 1])
+    return frame
 
 
 def _rotation_principal_axes_to_isometric_screen(
@@ -133,6 +152,113 @@ def _rotation_principal_axes_to_isometric_screen(
     vdir = vdir / np.linalg.norm(vdir)
     t = _isometric_target_frame(vdir)
     return t @ p.T
+
+
+def _apply_orientation(principal: np.ndarray, orientation: str) -> np.ndarray:
+    """Place the longest principal axis on screen.
+
+    ``"vertical"`` keeps the longest axis as screen-up. ``"horizontal"`` lays
+    it along the screen's horizontal axis and uses the second axis as up.
+    """
+    name = orientation.strip().lower()
+    if name == "vertical":
+        return principal
+    if name != "horizontal":
+        raise ValueError(
+            "orientation must be 'horizontal' or 'vertical', "
+            f"got {orientation!r}"
+        )
+    swapped = principal.copy()
+    swapped[:, [0, 1]] = principal[:, [1, 0]]
+    if float(np.linalg.det(swapped)) < 0.0:
+        swapped[:, 2] *= -1.0
+    return swapped
+
+
+def camera_from_points(
+    points: np.ndarray,
+    view_dir: np.ndarray | None = None,
+    *,
+    orientation: str = "horizontal",
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return ``(toward_camera, up)`` unit vectors in data coordinates.
+
+    Principal axes are mapped onto the isometric screen frame. By default the
+    longest axis lies horizontally on screen and the second axis is up. Pass
+    ``orientation="vertical"`` to stand the longest axis upright. The shortest
+    axis points toward the camera. A nearly spherical cloud keeps the default
+    isometric direction and world +Z up.
+    """
+    vdir = (
+        _DEFAULT_ISO_VIEW_DIR.copy()
+        if view_dir is None
+        else np.asarray(view_dir, dtype=float)
+    )
+    vdir = vdir / np.linalg.norm(vdir)
+    pts = np.asarray(points, dtype=float)
+    if pts.ndim != 2 or pts.shape[0] < 3 or pts.shape[1] != 3:
+        return vdir, _WORLD_UP.copy()
+    centered = pts - pts.mean(axis=0)
+    principal = _pca_principal_frame(centered)
+    if principal is None:
+        return vdir, _WORLD_UP.copy()
+    principal = _apply_orientation(principal, orientation)
+    frame = _isometric_target_frame(vdir)
+    rotation = frame @ principal.T
+    toward = rotation.T @ frame[:, 2]
+    up = rotation.T @ frame[:, 0]
+    toward = toward / np.linalg.norm(toward)
+    up_norm = float(np.linalg.norm(up))
+    if up_norm < 1e-12:
+        up = _WORLD_UP.copy()
+    else:
+        up = up / up_norm
+    return toward, up
+
+
+def plotly_camera(
+    points: np.ndarray,
+    *,
+    eye_scale: float = 1.25,
+    view_dir: np.ndarray | None = None,
+    orientation: str = "horizontal",
+) -> dict[str, dict[str, float]]:
+    """Plotly ``scene.camera`` eye and up for :func:`camera_from_points`.
+
+    Eye distance matches the historical ``(eye_scale, eye_scale, eye_scale)``
+    placement: ``eye_scale * sqrt(3)`` along the view direction.
+    ``orientation`` is ``"horizontal"`` (longest axis across the screen) or
+    ``"vertical"`` (longest axis upright).
+    """
+    toward, up = camera_from_points(points, view_dir, orientation=orientation)
+    eye = float(eye_scale) * float(np.sqrt(3.0)) * toward
+    return {
+        "eye": {"x": float(eye[0]), "y": float(eye[1]), "z": float(eye[2])},
+        "up": {"x": float(up[0]), "y": float(up[1]), "z": float(up[2])},
+    }
+
+
+def coerce_camera(camera: Any) -> dict[str, dict[str, float]]:
+    """Copy a Plotly scene camera into a plain ``{eye, up}`` dict."""
+    eye = camera["eye"]
+    up = camera["up"] if "up" in camera else {"x": 0.0, "y": 0.0, "z": 1.0}
+
+    def _vec(value: Any) -> dict[str, float]:
+        if isinstance(value, dict):
+            return {
+                "x": float(value["x"]),
+                "y": float(value["y"]),
+                "z": float(value["z"]),
+            }
+        if hasattr(value, "x"):
+            return {
+                "x": float(value.x),
+                "y": float(value.y),
+                "z": float(value.z),
+            }
+        return {"x": float(value[0]), "y": float(value[1]), "z": float(value[2])}
+
+    return {"eye": _vec(eye), "up": _vec(up)}
 
 
 def _prepare_mesh_polydata(
@@ -789,3 +915,412 @@ def save_surface_mesh_grid_svg(
         )
 
     return grid_svg, individual
+
+
+def visualize_mesh_3d(
+    mesh: Any,
+    title: str = "3D Mesh Visualization",
+    color: str = "lightblue",
+    backend: str = "auto",
+    show_axes: bool = True,
+    show_wireframe: bool = False,
+    width: int = 800,
+    height: int = 600,
+    *,
+    eye_scale: float = 1.25,
+    orientation: str = "horizontal",
+    camera: Any = None,
+    return_camera: bool = False,
+    skel: Optional[Union["SkeletonGraph", list["SkeletonGraph"]]] = None,
+    skel_color: Union[str, list[str]] = "crimson",
+    skel_line_width: float = 3.0,
+    skel_opacity: float = 0.95,
+    skel_marker_size: Optional[float] = None,
+) -> Any:
+    """Plot a mesh with :meth:`mascaf.mesh.MeshManager.visualize_mesh_3d`.
+
+    ``mesh`` may be a :class:`~mascaf.mesh.MeshManager`, a
+    :class:`trimesh.Trimesh`, or a path to a mesh file.
+
+    Args:
+        title: Plot title.
+        color: Mesh color (named color or RGB tuple).
+        backend: Visualization backend (``"auto"``, ``"plotly"``, or
+            ``"matplotlib"``).
+        show_axes: Whether to show coordinate axes.
+        show_wireframe: Whether to show a wireframe overlay.
+        width: Figure width in pixels (plotly).
+        height: Figure height in pixels (plotly).
+        eye_scale: Camera distance as a multiple of the unit view direction.
+        orientation: ``"horizontal"`` lays the longest axis across the screen.
+            ``"vertical"`` stands that axis upright.
+        camera: Plotly scene camera ``{eye, up}`` to reuse. When omitted, the
+            camera is computed from the mesh.
+        return_camera: If True, return ``(figure, camera)``.
+        skel: Optional skeleton, or a list of skeletons, drawn as 3D lines.
+        skel_color: Color or list of colors for the skeleton overlay.
+        skel_line_width: Line width for the skeleton overlay.
+        skel_opacity: Opacity for the skeleton overlay (plotly only).
+        skel_marker_size: If ``None`` or ``0``, no node markers. A positive
+            value draws markers at skeleton nodes.
+    """
+    from mascaf.mesh import MeshManager
+
+    if isinstance(mesh, MeshManager):
+        manager = mesh
+    elif isinstance(mesh, trimesh.Trimesh):
+        manager = MeshManager(mesh)
+    elif isinstance(mesh, (str, Path)):
+        manager = MeshManager(mesh_path=str(mesh))
+    else:
+        raise TypeError(
+            "mesh must be a MeshManager, trimesh.Trimesh, or path, "
+            f"got {type(mesh)}"
+        )
+    return manager.visualize_mesh_3d(
+        title=title,
+        color=color,
+        backend=backend,
+        show_axes=show_axes,
+        show_wireframe=show_wireframe,
+        width=width,
+        height=height,
+        eye_scale=eye_scale,
+        orientation=orientation,
+        camera=camera,
+        return_camera=return_camera,
+        skel=skel,
+        skel_color=skel_color,
+        skel_line_width=skel_line_width,
+        skel_opacity=skel_opacity,
+        skel_marker_size=skel_marker_size,
+    )
+
+
+def visualize_cable_3d(
+    cable: Any = None,
+    *,
+    swc_model: Any = None,
+    frusta: Any = None,
+    show_frusta: bool = True,
+    show_centroid: bool = True,
+    title: str = "Model",
+    sides: int = 16,
+    end_caps: bool = False,
+    plot_endcaps: bool = False,
+    color: str = "lightblue",
+    opacity: float = 0.5,
+    flatshading: bool = True,
+    tag_colors: dict[int, str] | None = None,
+    radius_scale: float = 1.0,
+    slider: bool = False,
+    min_scale: float = 0.0,
+    max_scale: float = 1.0,
+    steps: int = 21,
+    centroid_color: str = "black",
+    centroid_line_width: float = 2.0,
+    show_nodes: bool = False,
+    node_size: float = 2.0,
+    node_color: str = "#1f77b4",
+    point_set: Any = None,
+    point_size: float = 1.0,
+    point_color: str = "#d62728",
+    output_path: str | None = None,
+    auto_open: bool = False,
+    width: int = 1200,
+    height: int = 900,
+    show_axes: bool = True,
+    eye_scale: float = 1.25,
+    orientation: str = "horizontal",
+    camera: Any = None,
+    return_camera: bool = False,
+) -> Any:
+    """Plot a cable model with MASCAF camera and style defaults.
+
+    ``cable`` or ``swc_model`` may be an ``SWCModel`` or a
+    :class:`~mascaf.morphology_graph.MorphologyGraph`. The remaining
+    arguments are forwarded to :func:`swctools.plot_model`. MASCAF defaults
+    draw the centroid in black at line width 2 and the frusta at opacity 0.5.
+    The camera is the principal-axis view of the cable nodes.
+
+    Args:
+        cable: Cable to plot. Same role as ``swc_model``.
+        swc_model: Cable to plot when not passed as ``cable``.
+        frusta: Pre-built frusta. Built from the cable when omitted.
+        show_frusta: Whether to draw the frusta mesh.
+        show_centroid: Whether to draw the centerline.
+        title: Figure title.
+        sides: Circumferential resolution of each frustum.
+        end_caps: Whether frustum construction includes flat end caps.
+        plot_endcaps: Whether to add hemisphere caps on terminal nodes.
+        color: Frusta color.
+        opacity: Frusta opacity.
+        flatshading: Whether to flat-shade the frusta.
+        tag_colors: Optional mapping from SWC tag to color.
+        radius_scale: Uniform scale applied to radii.
+        slider: Whether to add a radius-scale slider.
+        min_scale: Minimum slider scale.
+        max_scale: Maximum slider scale.
+        steps: Number of slider steps.
+        centroid_color: Centerline color.
+        centroid_line_width: Centerline width.
+        show_nodes: Whether to draw node markers.
+        node_size: Node marker size.
+        node_color: Node marker color.
+        point_set: Extra points drawn as small spheres.
+        point_size: Scale of those spheres.
+        point_color: Color of those spheres.
+        output_path: HTML path to write, if any.
+        auto_open: Whether to open ``output_path`` in a browser.
+        width: Figure width in pixels.
+        height: Figure height in pixels.
+        show_axes: Whether to show axes, grid, and background.
+        eye_scale: Camera distance as a multiple of the unit view direction.
+        orientation: ``"horizontal"`` lays the longest axis across the screen.
+            ``"vertical"`` stands that axis upright.
+        camera: Plotly scene camera ``{eye, up}`` to reuse. When omitted, the
+            camera is computed from the cable nodes.
+        return_camera: If True, return ``(figure, camera)``.
+    """
+    from swctools import plot_model
+
+    if cable is not None and swc_model is not None:
+        raise TypeError("Pass the cable positionally or as swc_model, not both")
+    source = cable if cable is not None else swc_model
+    model = _as_swc_model(source) if source is not None else None
+    fig = plot_model(
+        swc_model=model,
+        frusta=frusta,
+        show_frusta=show_frusta,
+        show_centroid=show_centroid,
+        title=title,
+        sides=sides,
+        end_caps=end_caps,
+        plot_endcaps=plot_endcaps,
+        color=color,
+        opacity=opacity,
+        flatshading=flatshading,
+        tag_colors=tag_colors,
+        radius_scale=radius_scale,
+        slider=slider,
+        min_scale=min_scale,
+        max_scale=max_scale,
+        steps=steps,
+        centroid_color=centroid_color,
+        centroid_line_width=centroid_line_width,
+        show_nodes=show_nodes,
+        node_size=node_size,
+        node_color=node_color,
+        point_set=point_set,
+        point_size=point_size,
+        point_color=point_color,
+        output_path=output_path,
+        auto_open=auto_open,
+        width=width,
+        height=height,
+        show_axes=show_axes,
+    )
+    if fig is not None and model is not None:
+        nodes = list(model.nodes)
+        if camera is None and len(nodes) >= 3:
+            points = np.array(
+                [model.get_node_xyz(node) for node in nodes], dtype=float
+            )
+            camera = plotly_camera(
+                points, eye_scale=eye_scale, orientation=orientation
+            )
+    if camera is not None:
+        camera = coerce_camera(camera)
+        if fig is not None:
+            fig.update_layout(scene_aspectmode="data", scene_camera=camera)
+    if return_camera:
+        return fig, camera
+    return fig
+
+
+def _position_cloud(graph: Any) -> np.ndarray | None:
+    """Return ``(N, 3)`` positions from a graph, or a list of graphs."""
+    if graph is None:
+        return None
+    if isinstance(graph, (list, tuple)):
+        parts = [
+            cloud
+            for item in graph
+            if (cloud := _position_cloud(item)) is not None and len(cloud)
+        ]
+        return np.vstack(parts) if parts else None
+    if not hasattr(graph, "get_all_positions"):
+        return None
+    points = np.asarray(graph.get_all_positions(), dtype=float)
+    if points.size == 0:
+        return None
+    return points.reshape(-1, 3)
+
+
+def _comparison_bounds(
+    mesh_vertices: np.ndarray,
+    cable: Any,
+    skeleton: Any,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Axis-aligned bounds covering the mesh, skeleton, and cable surface."""
+    clouds = [np.asarray(mesh_vertices, dtype=float).reshape(-1, 3)]
+    skeleton_points = _position_cloud(skeleton)
+    if skeleton_points is not None:
+        clouds.append(skeleton_points)
+    nodes = list(cable.nodes)
+    if nodes:
+        centers = np.array(
+            [cable.get_node_xyz(node) for node in nodes], dtype=float
+        )
+        radii = np.array(
+            [float(cable.get_node_radius(node)) for node in nodes], dtype=float
+        )
+        radii = np.maximum(radii, 0.0)[:, None]
+        clouds.append(centers - radii)
+        clouds.append(centers + radii)
+    points = np.vstack(clouds)
+    return points.min(axis=0), points.max(axis=0)
+
+
+def _scene_style(
+    bounds_lo: np.ndarray,
+    bounds_hi: np.ndarray,
+    camera: dict[str, dict[str, float]],
+    *,
+    show_axes: bool,
+) -> dict[str, Any]:
+    """Shared scene layout so two panels use one frame and one camera."""
+    span = np.maximum(bounds_hi - bounds_lo, 1e-6)
+    pad = 0.02 * span
+    lo = bounds_lo - pad
+    hi = bounds_hi + pad
+    axis = {
+        "visible": show_axes,
+        "showbackground": False,
+        "showgrid": show_axes,
+        "zeroline": False,
+    }
+    return {
+        "aspectmode": "data",
+        "camera": camera,
+        "xaxis": {**axis, "range": [float(lo[0]), float(hi[0])]},
+        "yaxis": {**axis, "range": [float(lo[1]), float(hi[1])]},
+        "zaxis": {**axis, "range": [float(lo[2]), float(hi[2])]},
+    }
+
+
+def _as_swc_model(cable: Any) -> Any:
+    from mascaf.morphology_graph import MorphologyGraph
+    from swctools import SWCModel
+
+    if isinstance(cable, MorphologyGraph):
+        return cable.to_swc_model()
+    if isinstance(cable, SWCModel):
+        return cable
+    raise TypeError(
+        "cable must be an SWCModel or MorphologyGraph, " f"got {type(cable)}"
+    )
+
+
+def visualize_mesh_cable_3d(
+    mesh: Any,
+    skeleton: Any,
+    cable: Any,
+    *,
+    eye_scale: float = 1.25,
+    orientation: str = "horizontal",
+    camera: Any = None,
+    return_camera: bool = False,
+    show_axes: bool = False,
+    width: int = 1100,
+    height: int = 1000,
+    mesh_color: str = "lightblue",
+    top_title: str = "",
+    bottom_title: str = "",
+    **cable_kwargs: Any,
+) -> Any:
+    """Stacked mesh-with-skeleton and cable views in one orientation.
+
+    The top panel is the mesh with ``skeleton`` overlaid. The bottom panel is
+    ``cable`` (an ``SWCModel`` or :class:`~mascaf.morphology_graph.MorphologyGraph`).
+    Both panels use one camera: the supplied ``camera``, or the camera computed
+    from the mesh. They also share the same axis limits, expanded to include
+    the skeleton and the cable surface, so neither view crops the models and
+    both share one zoom. ``orientation`` is ``"horizontal"`` by default, so
+    the longest axis lies across each panel. The cable panel uses the MASCAF
+    ``visualize_cable_3d`` style. Set ``return_camera`` to also return that
+    camera.
+    """
+    from plotly.subplots import make_subplots
+
+    from mascaf.mesh import MeshManager
+
+    if isinstance(mesh, MeshManager):
+        manager = mesh
+    elif isinstance(mesh, trimesh.Trimesh):
+        manager = MeshManager(mesh)
+    elif isinstance(mesh, (str, Path)):
+        manager = MeshManager(mesh_path=str(mesh))
+    else:
+        raise TypeError(
+            "mesh must be a MeshManager, trimesh.Trimesh, or path, "
+            f"got {type(mesh)}"
+        )
+
+    swc_model = _as_swc_model(cable)
+    vertices = np.asarray(manager.mesh.vertices, dtype=float)
+    if camera is None:
+        camera = plotly_camera(
+            vertices, eye_scale=eye_scale, orientation=orientation
+        )
+    else:
+        camera = coerce_camera(camera)
+    panel_kwargs = dict(
+        show_axes=show_axes,
+        width=width,
+        height=height // 2,
+        eye_scale=eye_scale,
+        orientation=orientation,
+        camera=camera,
+        title="",
+    )
+    left = manager.visualize_mesh_3d(
+        skel=skeleton,
+        color=mesh_color,
+        **panel_kwargs,
+    )
+    right = visualize_cable_3d(swc_model=swc_model, **panel_kwargs, **cable_kwargs)
+    if left is None or right is None:
+        raise RuntimeError("Could not build one of the comparison panels")
+
+    fig = make_subplots(
+        rows=2,
+        cols=1,
+        specs=[[{"type": "scene"}], [{"type": "scene"}]],
+        subplot_titles=(top_title, bottom_title),
+        vertical_spacing=0.04,
+    )
+    for trace in left.data:
+        fig.add_trace(trace, row=1, col=1)
+    for trace in right.data:
+        fig.add_trace(trace, row=2, col=1)
+
+    bounds_lo, bounds_hi = _comparison_bounds(vertices, swc_model, skeleton)
+    scene = _scene_style(
+        bounds_lo,
+        bounds_hi,
+        camera,
+        show_axes=show_axes,
+    )
+    fig.update_layout(
+        scene=scene,
+        scene2=copy.deepcopy(scene),
+        showlegend=False,
+        width=width,
+        height=height,
+        margin=dict(l=0, r=0, t=40 if top_title or bottom_title else 0, b=0),
+        paper_bgcolor="white",
+    )
+    if return_camera:
+        return fig, camera
+    return fig

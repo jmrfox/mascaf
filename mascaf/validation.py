@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Union
+from typing import Optional, Union
 
 import trimesh
 
@@ -259,6 +259,44 @@ class Validation:
             "relative_error": rel_error,
         }
 
+    def compare_containment(
+        self,
+        *,
+        tol: Optional[float] = None,
+        tol_fraction: float = 1e-6,
+    ) -> dict:
+        """Count morphology nodes and edges that leave the mesh volume.
+
+        Nodes are tested with :meth:`MorphologyGraph.get_outside_nodes`.
+        Edges are the straight centerlines, classified by
+        :meth:`MorphologyGraph.classify_edges_against_mesh`.
+
+        Parameters
+        ----------
+        tol : float or None
+            Absolute exterior tolerance. When ``None``, uses
+            ``tol_fraction * ||mesh.extents||``.
+        tol_fraction : float
+            Relative scale used when ``tol`` is ``None``.
+
+        Returns
+        -------
+        dict
+            ``n_outside_nodes``, ``n_crossing_edges``, and
+            ``n_fully_outside_edges``.
+        """
+        outside_nodes = self.morphology.get_outside_nodes(
+            self.mesh, tol=tol, tol_fraction=tol_fraction
+        )
+        edges = self.morphology.classify_edges_against_mesh(
+            self.mesh, tol=tol, tol_fraction=tol_fraction
+        )
+        return {
+            "n_outside_nodes": len(outside_nodes),
+            "n_crossing_edges": len(edges["crossing"]),
+            "n_fully_outside_edges": len(edges["fully_outside"]),
+        }
+
     def full_validation(
         self,
         overlap_scaling_area: float = DEFAULT_OVERLAP_SCALING_AREA,
@@ -267,8 +305,10 @@ class Validation:
         """Run all validation checks and log comprehensive results.
 
         Compares volumes and surface areas (with and without branch-point
-        overlap correction when branch vertices are present) and logs
-        each result via the module logger at ``INFO`` level.
+        overlap correction when branch vertices are present), counts nodes
+        outside the mesh and edges that cross the surface or lie fully
+        outside it, and logs each result via the module logger at ``INFO``
+        level.
 
         Parameters
         ----------
@@ -283,8 +323,11 @@ class Validation:
 
         Returns
         -------
-        None
-            Results are emitted via logging rather than returned.
+        dict
+            Containment counts from :meth:`compare_containment`:
+            ``n_outside_nodes``, ``n_crossing_edges``, and
+            ``n_fully_outside_edges``. Volume and area comparisons are
+            logged only.
         """
         has_branch_vertices = any(
             self.morphology.degree[n] > 2 for n in self.morphology.nodes()
@@ -322,6 +365,14 @@ class Validation:
             logger.info(f"---- Ratio:             {area_result['ratio']:.4f}")
             logger.info(f"---- Error:             {area_result['error']:.4f}")
             logger.info(f"---- Relative error:    {area_result['relative_error']:.2%}")
+
+        containment = self.compare_containment()
+        logger.info("-- Containment:")
+        logger.info(f"---- Outside nodes:       {containment['n_outside_nodes']}")
+        logger.info(f"---- Crossing edges:      {containment['n_crossing_edges']}")
+        logger.info(
+            f"---- Fully outside edges: {containment['n_fully_outside_edges']}"
+        )
         logger.info("")
 
-        return None
+        return containment

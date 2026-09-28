@@ -756,6 +756,91 @@ class MorphologyGraph(Graph3D):
 
         return scale_factor
 
+    def extend_terminals(
+        self,
+        *,
+        length_scale: float = 1.0,
+        radius_fraction: float = 1.0,
+    ) -> int:
+        """Continue each branch tip by one segment beyond the current terminal.
+
+        The current terminal is the parent of the new point. The new segment
+        follows the outward tangent through that parent. Its length, the
+        distance from the parent to the new terminal, is ``length_scale``
+        times the parent radius (default one parent radius). The new tip
+        radius is ``radius_fraction`` times that same parent radius (default
+        one half). The former tip becomes a continuation node, so the terminal
+        moves to the new node.
+
+        Note that default values for length_scale and radius_fraction
+        correspond to approximating a spherical end-cap of radius r by
+        a cylinder of radius r and length r, which has the same surface area
+        as the sphere, ignoring end-cap area.
+        Simulator codes typically ignore end-cap area.
+
+        Parameters
+        ----------
+        length_scale : float, default 1.0
+            Multiplier on the parent radius. The new segment length is this
+            times the parent radius.
+        radius_fraction : float, default 1.0
+            Fraction of the parent radius assigned to the new terminal.
+
+        Returns
+        -------
+        int
+            Number of tips extended. Zero when the graph has no degree-1 nodes.
+
+        Raises
+        ------
+        ValueError
+            If ``length_scale`` or ``radius_fraction`` is not positive, the
+            terminal radius is not positive, or the edge into a tip has zero
+            length.
+        """
+        length_scale = float(length_scale)
+        radius_fraction = float(radius_fraction)
+        if length_scale <= 0.0:
+            raise ValueError(f"length_scale must be positive, got {length_scale}")
+        if radius_fraction <= 0.0:
+            raise ValueError(f"radius_fraction must be positive, got {radius_fraction}")
+
+        terminals = [node for node in self.nodes() if self.degree(node) == 1]
+        if not terminals:
+            return 0
+
+        int_ids = [node for node in self.nodes() if isinstance(node, int)]
+        next_id = (max(int_ids) + 1) if int_ids else 0
+        extended = 0
+        for terminal in terminals:
+            parent = next(iter(self.neighbors(terminal)))
+            parent_xyz = np.asarray(self.get_node_position(parent), dtype=float)
+            tip_xyz = np.asarray(self.get_node_position(terminal), dtype=float)
+            delta = tip_xyz - parent_xyz
+            length = float(np.linalg.norm(delta))
+            if length <= 0.0:
+                raise ValueError(
+                    f"Zero-length edge from parent {parent} to terminal {terminal}"
+                )
+            parent_radius = self.nodes[terminal].get("radius")
+            if parent_radius is None or float(parent_radius) <= 0.0:
+                raise ValueError(
+                    f"Terminal {terminal} needs a positive radius to extend"
+                )
+            parent_radius = float(parent_radius)
+            direction = delta / length
+            new_xyz = tip_xyz + direction * (length_scale * parent_radius)
+            new_radius = radius_fraction * parent_radius
+            new_id = next_id
+            next_id += 1
+            attrs: dict = {"xyz": new_xyz, "radius": new_radius}
+            if "t" in self.nodes[terminal]:
+                attrs["t"] = self.nodes[terminal]["t"]
+            self.add_node(new_id, **attrs)
+            self.add_edge(terminal, new_id)
+            extended += 1
+        return extended
+
     def get_outside_nodes(
         self,
         mesh,
@@ -798,7 +883,7 @@ class MorphologyGraph(Graph3D):
         else:
             mesh_obj = mesh
 
-        node_ids = list(self.nodes())
+        node_ids = sorted(self.nodes())
         all_pts = self.get_all_positions()
         logger.debug(
             "Checking %d morphology nodes against mesh containment",
@@ -825,6 +910,120 @@ class MorphologyGraph(Graph3D):
         except Exception as exc:
             logger.error("Failed to identify outside morphology nodes: %s", exc)
             return []
+
+    def classify_edges_against_mesh(
+        self,
+        mesh,
+        *,
+        tol: Optional[float] = None,
+        tol_fraction: float = 1e-6,
+    ) -> dict[str, list[tuple]]:
+        """Classify centerline edges that leave the mesh volume.
+
+        An edge is the straight segment between its node positions. The node
+        radii are not tested. A surface hit counts only when it lies strictly
+        between the endpoints, using the same exterior tolerance as
+        :meth:`get_outside_nodes`.
+
+        Parameters
+        ----------
+        mesh : trimesh.Trimesh or MeshManager
+            Target mesh used for containment and ray tests.
+        tol : float or None
+            Absolute exterior tolerance. When ``None``, uses
+            ``tol_fraction * ||mesh.extents||``.
+        tol_fraction : float
+            Relative scale used when ``tol`` is ``None``.
+
+        Returns
+        -------
+        dict
+            ``crossing`` lists edges whose open segment hits the surface, or
+            whose endpoints disagree (one inside, one outside).
+            ``fully_outside`` lists edges with both endpoints outside and no
+            interior hit. Edges that stay inside are omitted. Each entry is
+            ``(u, v)`` in graph edge order.
+        """
+        empty: dict[str, list[tuple]] = {"crossing": [], "fully_outside": []}
+        if self.number_of_edges() == 0:
+            return empty
+
+        mesh_obj = self._mesh_for_containment(mesh)
+        from .mesh_contains import default_distance_tol, points_inside_mesh
+
+        threshold = default_distance_tol(
+            mesh_obj, tol=tol, tol_fraction=tol_fraction
+        )
+        node_ids = sorted(self.nodes())
+        inside = points_inside_mesh(
+            mesh_obj,
+            self.get_all_positions(),
+            tol=tol,
+            tol_fraction=tol_fraction,
+        )
+        inside_by_id = dict(zip(node_ids, inside.tolist()))
+
+        edges: list[tuple] = []
+        origins: list[np.ndarray] = []
+        directions: list[np.ndarray] = []
+        lengths: list[float] = []
+        for u, v in self.edges():
+            start = self.get_node_position(u)
+            end = self.get_node_position(v)
+            delta = end - start
+            length = float(np.linalg.norm(delta))
+            if length <= threshold:
+                continue
+            edges.append((u, v))
+            origins.append(start)
+            directions.append(delta)
+            lengths.append(length)
+
+        hit_rays: set[int] = set()
+        if edges:
+            try:
+                locations, index_ray, _ = mesh_obj.ray.intersects_location(
+                    ray_origins=np.vstack(origins),
+                    ray_directions=np.vstack(directions),
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    "Ray tracing failed while classifying morphology edges"
+                ) from exc
+            if len(locations) > 0:
+                origins_arr = np.vstack(origins)
+                directions_arr = np.vstack(directions)
+                lengths_arr = np.asarray(lengths, dtype=float)
+                index_ray = np.asarray(index_ray, dtype=int)
+                hit_origins = origins_arr[index_ray]
+                hit_dirs = directions_arr[index_ray]
+                denom = np.sum(hit_dirs * hit_dirs, axis=1)
+                along = np.sum((locations - hit_origins) * hit_dirs, axis=1) / denom
+                along = along * lengths_arr[index_ray]
+                edge_lengths = lengths_arr[index_ray]
+                interior = (along > threshold) & (along < edge_lengths - threshold)
+                hit_rays = set(index_ray[interior].tolist())
+
+        crossing: list[tuple] = []
+        fully_outside: list[tuple] = []
+        for index, (u, v) in enumerate(edges):
+            u_inside = bool(inside_by_id[u])
+            v_inside = bool(inside_by_id[v])
+            if index in hit_rays or u_inside != v_inside:
+                crossing.append((u, v))
+            elif not u_inside and not v_inside:
+                fully_outside.append((u, v))
+        return {"crossing": crossing, "fully_outside": fully_outside}
+
+    def _mesh_for_containment(self, mesh):
+        """Return the ``trimesh.Trimesh`` inside a MeshManager, or the mesh."""
+        try:
+            from .mesh import MeshManager
+        except ImportError:
+            MeshManager = None
+        if MeshManager is not None and isinstance(mesh, MeshManager):
+            return mesh.mesh
+        return mesh
 
     def print_attributes(
         self, *, node_info: bool = False, edge_info: bool = False

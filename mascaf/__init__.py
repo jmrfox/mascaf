@@ -83,6 +83,9 @@ from .visualization import (  # noqa: E402
     plot_surface_mesh_grid,
     save_surface_meshes_svg,
     save_surface_mesh_grid_svg,
+    visualize_cable_3d,
+    visualize_mesh_3d,
+    visualize_mesh_cable_3d,
 )
 
 __all__ = [
@@ -133,4 +136,7 @@ __all__ = [
     "plot_surface_mesh_grid",
     "save_surface_meshes_svg",
     "save_surface_mesh_grid_svg",
+    "visualize_cable_3d",
+    "visualize_mesh_3d",
+    "visualize_mesh_cable_3d",
 ]

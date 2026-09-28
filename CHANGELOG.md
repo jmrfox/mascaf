@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Changed
+
+- Example meshes, skeletons, and SWC files moved from `mascaf.demo` to `data/demo`.
+
 ---
 
 ## [1.2.2] — 2026-09-27

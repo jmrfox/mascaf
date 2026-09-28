@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-from importlib.resources import files
 from pathlib import Path
 
 from mascaf import (
@@ -18,8 +17,8 @@ from mascaf import (
     Validation,
 )
 
-_DEMO = files("mascaf.demo")
-DEFAULT_MESH = Path(str(_DEMO / "torus.obj"))
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_MESH = _REPO_ROOT / "data" / "demo" / "torus.obj"
 DEFAULT_OUTPUT_DIR = Path("outputs")
 
 

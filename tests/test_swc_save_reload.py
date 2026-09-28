@@ -13,7 +13,7 @@ from mascaf import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DATA = ROOT / "mascaf" / "demo"
+DATA = ROOT / "data" / "demo"
 
 
 def test_swc_save_reload_preserves_edges():

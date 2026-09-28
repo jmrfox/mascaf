@@ -14,7 +14,6 @@
 
 # %%
 import logging
-from importlib.resources import files
 from pathlib import Path
 
 from mascaf import (
@@ -24,8 +23,9 @@ from mascaf import (
     MeshManager,
     SkeletonGraph,
     Validation,
+    visualize_cable_3d,
 )
-from swctools import SWCModel, plot_model
+from swctools import SWCModel
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
@@ -37,9 +37,9 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 # %%
 demo_model = "branching"  # "torus" | "cylinder" | "branching"
 
-_DEMO = files("mascaf.demo")
-mesh_path = Path(str(_DEMO / f"{demo_model}.obj"))
-skeleton_path = Path(str(_DEMO / f"{demo_model}.polylines.txt"))
+_DEMO = Path.cwd() / "data" / "demo"
+mesh_path = _DEMO / f"{demo_model}.obj"
+skeleton_path = _DEMO / f"{demo_model}.polylines.txt"
 output_dir = Path("outputs")
 output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -61,14 +61,18 @@ print(f"Skeleton: {skeleton.number_of_nodes()} nodes")
 # ## Visualize mesh
 
 # %%
-fig = mm.visualize_mesh_3d(skel=None, show_axes=False, title="")
+fig, camera = mm.visualize_mesh_3d(
+    skel=None, show_axes=False, title="", return_camera=True
+)
 fig.show()
 
 # %% [markdown]
 # ## Visualize mesh with skeleton overlay
 
 # %%
-fig = mm.visualize_mesh_3d(skel=skeleton, show_axes=False, title="")
+fig = mm.visualize_mesh_3d(
+    skel=skeleton, show_axes=False, title="", camera=camera
+)
 fig.show()
 
 # %% [markdown]
@@ -117,7 +121,7 @@ print(
 model = SWCModel.from_swc_file(str(swc_path))
 model.print_attributes(node_info=False, edge_info=False)
 
-fig = plot_model(
+fig = visualize_cable_3d(
     swc_model=model,
     slider=False,
     title="",
@@ -125,6 +129,7 @@ fig = plot_model(
     height=600,
     show_axes=False,
     plot_endcaps=True,
+    camera=camera,
 )
 fig.show()
 

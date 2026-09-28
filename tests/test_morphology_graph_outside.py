@@ -16,6 +16,15 @@ def unit_sphere() -> trimesh.Trimesh:
     return mesh
 
 
+def test_get_outside_nodes_matches_sorted_positions(unit_sphere):
+    graph = MorphologyGraph()
+    graph.add_node(2, xyz=np.array([2.0, 0.0, 0.0]), radius=0.1)
+    graph.add_node(0, xyz=np.array([0.0, 0.0, 0.0]), radius=0.1)
+    graph.add_edge(2, 0)
+
+    assert graph.get_outside_nodes(unit_sphere) == [2]
+
+
 def test_get_outside_nodes_returns_only_outside_ids(unit_sphere):
     graph = MorphologyGraph()
     graph.add_node(0, xyz=np.array([0.0, 0.0, 0.0]), radius=0.1)
