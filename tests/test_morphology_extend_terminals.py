@@ -33,10 +33,10 @@ def test_extend_terminals_both_ends():
     left, right = by_x
 
     # Node 1 (r=2) is the parent of the left tip; node 2 (r=1) parents the right.
-    np.testing.assert_allclose(positions[left], [-2.0, 0.0, 0.0])
-    assert radii[left] == pytest.approx(2.0)
-    np.testing.assert_allclose(positions[right], [5.0, 0.0, 0.0])
-    assert radii[right] == pytest.approx(1.0)
+    np.testing.assert_allclose(positions[left], [-1.0, 0.0, 0.0])
+    assert radii[left] == pytest.approx(1.0)
+    np.testing.assert_allclose(positions[right], [4.5, 0.0, 0.0])
+    assert radii[right] == pytest.approx(0.5)
     assert graph.has_edge(1, left)
     assert graph.has_edge(2, right)
 

@@ -25,7 +25,7 @@ mesh_fig, camera = visualize_mesh_3d(
     show_axes=False,
     width=800,
     height=600,
-    eye_scale=2.2,
+    eye_scale=1.5,
     return_camera=True,
 )
 mesh_fig
@@ -36,7 +36,7 @@ mesh_fig
 # `CableFitter` resamples the skeleton so edges are at most `max_edge_length` and estimates a radius at each sample from the mesh cross-section.
 
 # %%
-max_edge_length = 1.0
+max_edge_length = 3
 
 morph = CableFitter(FitOptions(max_edge_length=max_edge_length)).fit(mm.mesh, skeleton)
 
@@ -47,7 +47,7 @@ morph = CableFitter(FitOptions(max_edge_length=max_edge_length)).fit(mm.mesh, sk
 
 # %%
 fig = visualize_mesh_cable_3d(
-    mm, skeleton, morph, show_axes=False, eye_scale=2.2, camera=camera
+    mm, skeleton, morph, show_axes=False, camera=camera, show_nodes=True, node_size=8, centroid_line_width=5
 )
 fig.show()
 
@@ -65,7 +65,7 @@ morph_scaled.scale_radii_to_match_mesh(
     mm.mesh, metric="surface_area", account_for_overlaps=False
 )
 fig = visualize_mesh_cable_3d(
-    mm, skeleton, morph_scaled, show_axes=False, eye_scale=2, camera=camera
+    mm, skeleton, morph_scaled, show_axes=False, camera=camera, show_nodes=True, node_size=8, centroid_line_width=5
 )
 fig.show()
 

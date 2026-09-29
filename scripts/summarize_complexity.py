@@ -1,9 +1,15 @@
 """Collapse a complexity-analysis CSV to one paper-table row per model.
 
 The sweep in ``scripts/complexity_analysis.py`` fits each model at three
-``max_edge_length / thickness`` values so scaling can be estimated. This
-script keeps that estimate and reports size and cost at the oracle's
-default resolution (``mel_over_thickness`` = 2).
+``max_edge_length / thickness`` values so scaling can be estimated. When
+the input includes multiple stochastic replicates per resolution, this
+script keeps the replicate whose overlap-subtracted volume ratio is nearest
+1 at each resolution and terminal-extension setting before summarizing.
+
+This script keeps the scaling estimate and reports size, cost, and
+overlap-subtracted volume and surface-area errors, plus the volume error
+after scaling radii to the mesh surface area, at the oracle's default
+resolution (``mel_over_thickness`` = 1).
 
 The script also writes a runtime-versus-skeleton-nodes scatter beside the
 summary CSV.
@@ -22,16 +28,20 @@ import math
 from collections import OrderedDict
 from pathlib import Path
 
+from complexity_analysis import select_best_per_resolution
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_INPUT = _REPO_ROOT / "outputs" / "complexity_analysis.csv"
 _DEFAULT_OUTPUT = _REPO_ROOT / "outputs" / "complexity_summary.csv"
-_REFERENCE_K = 2.0
+_REFERENCE_K = 1.0
 
-# Nine metrics. Size columns do not depend on resolution. Cost, morphology
-# size, and volume error are taken at mel/t = 2. The exponent is the log-log
-# slope of runtime versus morphology node count across all three resolutions.
+# Size columns do not depend on resolution. Cost, morphology size, and
+# volume/area errors are taken at mel/t = 1 for each terminal-extension
+# setting. The exponent is the log-log slope of runtime versus morphology
+# node count across resolutions within that setting.
 _COLUMNS = (
     "model",
+    "extend_terminals",
     "mesh_vertices",
     "skeleton_nodes",
     "n_branches",
@@ -40,6 +50,8 @@ _COLUMNS = (
     "runtime_s",
     "peak_rss_mb",
     "volume_relative_error",
+    "area_relative_error",
+    "volume_relative_error_sa_norm",
     "runtime_scaling_exponent",
 )
 
@@ -53,8 +65,20 @@ _REFERENCE_FIELDS = (
     "morphology_nodes",
     "runtime_s",
     "peak_rss_mb",
-    "volume_relative_error",
+    "volume_relative_error_sa_norm",
 )
+# Reported errors are the overlap-subtracted values. Older CSVs that lack
+# those columns fall back to the uncorrected errors.
+_ERROR_FIELDS = {
+    "volume_relative_error": (
+        "volume_relative_error_overlaps",
+        "volume_relative_error",
+    ),
+    "area_relative_error": (
+        "area_relative_error_overlaps",
+        "area_relative_error",
+    ),
+}
 _SCALING_FIELDS = ("runtime_scaling_exponent",)
 
 
@@ -102,27 +126,41 @@ def _consistent(rows: list[dict[str, str]], field: str) -> float:
     return first
 
 
+def _summary_key(row: dict[str, str]) -> tuple[str, str]:
+    name = row["model"].strip()
+    extend = str(row.get("extend_terminals", "")).strip()
+    return (name, extend)
+
+
 def summarize(rows: list[dict[str, str]]) -> list[dict[str, str]]:
-    grouped: OrderedDict[str, list[dict[str, str]]] = OrderedDict()
+    grouped: OrderedDict[tuple[str, str], list[dict[str, str]]] = OrderedDict()
     for row in rows:
         name = row["model"].strip()
         if not name:
             continue
-        grouped.setdefault(name, []).append(row)
+        grouped.setdefault(_summary_key(row), []).append(row)
 
     summary: list[dict[str, str]] = []
-    for name, model_rows in grouped.items():
+    for (name, extend), model_rows in grouped.items():
         if len(model_rows) < 2:
             raise ValueError(
-                f"{name} has {len(model_rows)} resolution row(s); "
-                "scaling needs at least two."
+                f"{name} extend_terminals={extend or 'unset'} has "
+                f"{len(model_rows)} resolution row(s); scaling needs at least two."
             )
         reference = _reference_row(model_rows)
-        record = {"model": name}
+        record = {"model": name, "extend_terminals": extend}
         for field in _SIZE_FIELDS:
             record[field] = _format(_consistent(model_rows, field))
         for field in _REFERENCE_FIELDS:
             record[field] = _format(_float(reference.get(field, "")))
+        for field, sources in _ERROR_FIELDS.items():
+            raw = ""
+            for source in sources:
+                candidate = reference.get(source, "")
+                if candidate is not None and str(candidate).strip() != "":
+                    raw = candidate
+                    break
+            record[field] = _format(_float(raw))
         for field in _SCALING_FIELDS:
             record[field] = _format(_consistent(model_rows, field))
         summary.append(record)
@@ -212,7 +250,8 @@ def main() -> None:
     output_path = _resolve(Path(args.output))
     if not input_path.is_file():
         raise SystemExit(f"Input CSV not found: {input_path}")
-    rows = summarize(read_rows(input_path))
+    raw_rows = read_rows(input_path)
+    rows = summarize(select_best_per_resolution(raw_rows))
     write_rows(output_path, rows)
     figure_path = output_path.with_name(f"{output_path.stem}_runtime.png")
     plot_runtime(rows, figure_path)

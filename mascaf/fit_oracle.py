@@ -59,16 +59,18 @@ class SuggestedFitParameters:
 class FitOracleOptions:
     """Knobs for :func:`suggest_fit_parameters`.
 
-    Default ``mel_over_thickness`` (~2) matches TS1's historical
-    ``~0.06 × bbox_diagonal`` sampling when the skeleton is long relative to
-    local thickness. For compact spines (short skeleton / thickness), mel is
-    also capped by ``skeleton_length / n_target`` so the basis is not
-    under-sampled.
+    Default ``mel_over_thickness`` is 1 (one local thickness). Useful
+    values are 1, 2, and 3. For compact spines (short skeleton /
+    thickness), mel is also capped by ``skeleton_length / n_target`` so the
+    basis is not under-sampled.
+
+    ``active_resample_min_over_mel`` stays at 0. A merge threshold that is a
+    sizable fraction of ``max_edge_length`` deletes short branches.
     """
 
-    mel_over_thickness: float = 2.0
-    mel_over_thickness_min: float = 0.5
-    mel_over_thickness_max: float = 3.5
+    mel_over_thickness: float = 1.0
+    mel_over_thickness_min: float = 1.0
+    mel_over_thickness_max: float = 3.0
     min_target_edges: int = 12
     """Lower bound on target edge count when capping mel by skeleton length."""
     sdf_n_samples: int = 200
@@ -80,16 +82,17 @@ class FitOracleOptions:
     localization_beta: float = 2.0
     step_scale: float = 0.5
     alpha_s: float = 0.1
-    max_iterations: int = 30
+    max_iterations: int = 20
     do_pruning: bool = True
     pruning_length_fraction: float = 0.2
     do_snapping: bool = True
     do_forcing: bool = True
     preserve_terminal_nodes: bool = True
     preserve_branch_nodes: bool = False
-    active_resample: bool = True
-    # Active-resample band as multiples of suggested mel (converted to D-frac)
-    active_resample_min_over_mel: float = 0.5
+    active_resample: bool = False
+    # Active-resample band as multiples of suggested mel (converted to D-frac).
+    # The minimum stays ~0 so short branches are not merged away.
+    active_resample_min_over_mel: float = 0.0
     active_resample_max_over_mel: float = 1.0
     active_resample_allow_cycle_collapse: bool = False
 
@@ -237,8 +240,10 @@ def suggest_fit_parameters(
             "Raised active_resample max to 2× min to satisfy basis-optimizer "
             "merge/split guard"
         )
-    min_frac = min_len / D if D > 0 else 0.05
+    min_frac = min_len / D if D > 0 else 0.0
     max_frac = max_len / D if D > 0 else 0.1
+    # BasisOptimizer requires a strictly positive merge fraction. 1e-6 of the
+    # bbox diagonal is negligible next to mel and does not drop branches.
     min_frac = float(np.clip(min_frac, 1e-6, 1.0))
     max_frac = float(np.clip(max_frac, min_frac * 2.0, 1.0))
 

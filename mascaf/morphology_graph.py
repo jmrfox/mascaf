@@ -760,30 +760,24 @@ class MorphologyGraph(Graph3D):
         self,
         *,
         length_scale: float = 1.0,
-        radius_fraction: float = 1.0,
+        radius_fraction: float = 0.5,
     ) -> int:
         """Continue each branch tip by one segment beyond the current terminal.
 
         The current terminal is the parent of the new point. The new segment
         follows the outward tangent through that parent. Its length, the
         distance from the parent to the new terminal, is ``length_scale``
-        times the parent radius (default one parent radius). The new tip
+        times the parent radius (default half a parent radius). The new tip
         radius is ``radius_fraction`` times that same parent radius (default
-        the full parent radius). The former tip becomes a continuation node,
+        half the parent radius). The former tip becomes a continuation node,
         so the terminal moves to the new node.
-
-        Note that default values for length_scale and radius_fraction
-        correspond to approximating a spherical end-cap of radius r by
-        a cylinder of radius r and length r, which has the same surface area
-        as the sphere, ignoring end-cap area.
-        Simulator codes typically ignore end-cap area.
 
         Parameters
         ----------
-        length_scale : float, default 1.0
+        length_scale : float, default 0.5
             Multiplier on the parent radius. The new segment length is this
             times the parent radius.
-        radius_fraction : float, default 1.0
+        radius_fraction : float, default 0.5
             Fraction of the parent radius assigned to the new terminal.
 
         Returns

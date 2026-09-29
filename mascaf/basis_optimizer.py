@@ -44,6 +44,11 @@ class BasisOptimizerOptions:
     is skipped with a warning; set ``active_resample_allow_cycle_collapse``
     to allow such merges.
 
+    ``active_resample`` is WIP and off by default. Bisecting a long edge and
+    then snapping the midpoint inside the mesh can collapse one half to nearly
+    zero length. The next pass merges that stub and splits the restored long
+    edge again, so merge and split counts climb until the operation cap.
+
     Early stopping (any criterion may halt; all are active by default):
 
     - average node movement below ``convergence_threshold``
@@ -81,7 +86,7 @@ class BasisOptimizerOptions:
     centering_error_stop_fraction: float = 0.1
     centering_error_plateau_tol: float = 1e-3
     centering_error_plateau_patience: int = 2
-    centering_error_increase_patience: int = 2
+    centering_error_increase_patience: int = 3
     snap_ray_perturb_scales: tuple[float, ...] = (1e-4, 1e-3, 1e-2, 5e-2)
     snap_ray_perturb_angles: int = 8
     snap_chord_fraction: float = 0.25

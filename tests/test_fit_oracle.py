@@ -104,6 +104,19 @@ def test_oracle_overrides():
     assert sug.basis_optimizer_options.n_rays == 24
 
 
+def test_active_resample_min_fraction_does_not_track_mel():
+    mesh = example_mesh("torus", major_radius=4.0, minor_radius=1.0)
+    sk = _torus_skeleton(major=4.0)
+    sug = suggest_fit_parameters(
+        mesh, sk, oracle_options=FitOracleOptions(sdf_n_samples=30, sdf_seed=0)
+    )
+    assert sug.basis_optimizer_options.active_resample is False
+    min_frac = sug.basis_optimizer_options.active_resample_min_fraction
+    max_frac = sug.basis_optimizer_options.active_resample_max_fraction
+    assert min_frac == pytest.approx(1e-6)
+    assert max_frac > 100.0 * min_frac
+
+
 def test_fraction_bounds_around_suggestion():
     mesh = example_mesh("torus", major_radius=4.0, minor_radius=1.0)
     sk = _torus_skeleton(major=4.0)

@@ -56,7 +56,7 @@ def test_options_new_force_defaults():
     assert opts.centering_error_stop_fraction == 0.1
     assert opts.centering_error_plateau_tol == 1e-3
     assert opts.centering_error_plateau_patience == 2
-    assert opts.centering_error_increase_patience == 2
+    assert opts.centering_error_increase_patience == 3
     assert opts.outside_distance_tol is None
     assert opts.outside_distance_tol_fraction == 1e-6
     assert not hasattr(opts, "lambda_smooth")

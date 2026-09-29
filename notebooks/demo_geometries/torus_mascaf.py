@@ -59,7 +59,7 @@ validator.full_validation()
 morph.scale_radii_to_match_mesh(
     mm.mesh, metric="surface_area", account_for_overlaps=False
 )
-fig = visualize_mesh_cable_3d(mm, skeleton, morph, show_axes=False, camera=camera)
+fig = visualize_mesh_cable_3d(mm, skeleton, morph, show_axes=False, camera=camera, show_nodes=True, node_size=8, centroid_line_width=5)
 fig.show()
 
 validator = Validation(mm, skeleton, morph)

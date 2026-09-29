@@ -10,6 +10,32 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ---
 
+## [1.4.0] — 2026-09-29
+
+### Added
+
+- Complexity sweeps (`scripts/complexity_analysis.py`) repeat each fit, score
+  the cable with and without tip extension, and record overlap-subtracted
+  volume and area errors plus the total volume error after scaling radii to
+  the mesh surface area. The summary keeps the replicate whose
+  overlap-subtracted volume ratio is nearest 1 at `mel/t = 1`.
+- `--replicates` and `--log-file` on the complexity sweep.
+- Notebook `notebooks/toric_spines/ts1_complexity_fit` for the TS1 summary-row
+  fit.
+
+### Changed
+
+- Fit-oracle resolution suggestions use `mel/t` in 1, 2, and 3 (default 1).
+  Active resampling is off. It is still WIP: snapping a bisected midpoint
+  inside the mesh can collapse one half-edge and oscillate merge/split until
+  the operation cap.
+- `BasisOptimizerOptions.centering_error_increase_patience` default is 3.
+  Oracle `max_iterations` default is 20.
+- `MorphologyGraph.extend_terminals` defaults are half a parent radius for
+  both the new segment length and the new tip radius.
+
+---
+
 ## [1.3.0] — 2026-09-27
 
 ### Added

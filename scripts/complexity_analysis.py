@@ -1,21 +1,33 @@
 """Sweep MASCAF resolution and write a complexity table as CSV.
 
 Fits cylinder, torus, branching, and the toric spines at three
-thickness-relative ``max_edge_length`` values. Each row records mesh and
-skeleton size, fit fidelity, wall time, and process working-set RAM.
-After the three fits for a model, both rows of that model get a log-log
-scaling exponent of runtime and peak RAM versus morphology node count.
+thickness-relative ``max_edge_length`` values. Each (model, resolution)
+case is fit ``N`` times (default 3) because basis optimization is
+stochastic. Each fit is then scored twice: as fitted, and after
+``extend_terminals()`` with its default length and radius scales.
+Volume and surface-area errors are recorded with and without branch
+overlap corrections. Each cable is then scaled so its total surface area
+matches the mesh, and the post-normalization volume error (no overlap
+subtraction) is recorded. Scaling exponents and downstream summaries use
+the replicate whose overlap-subtracted volume ratio is nearest 1,
+separately for each terminal-extension setting.
+
+Each row records mesh and skeleton size, fit fidelity, wall time, and
+process working-set RAM. After the fits for a model, all rows for that
+model receive a log-log scaling exponent of runtime and peak RAM versus
+morphology node count (from the best replicate at each resolution).
 
 Example::
 
     uv run python scripts/complexity_analysis.py
     uv run python scripts/complexity_analysis.py --models cylinder
-    uv run python scripts/complexity_analysis.py --models cylinder,TS1 --mel-over-thickness 1,2,3.5
+    uv run python scripts/complexity_analysis.py --models cylinder,TS1 --mel-over-thickness 1,2,3
 """
 
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
 import ctypes
 import logging
@@ -46,13 +58,17 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_OUTPUT = _REPO_ROOT / "outputs" / "complexity_analysis.csv"
 _DEMO_NAMES = ("cylinder", "torus", "branching")
 _SPINE_IDS = (1, 2, 3, 4, 21, 24, 48, 67, 76)
-_DEFAULT_K = (1.0, 2.0, 3.5)
+_DEFAULT_K = (1.0, 2.0, 3.0)
+_DEFAULT_N_RUNS = 3
 _SAMPLE_INTERVAL_S = 0.05
 
 _COLUMNS = (
     "model",
     "group",
     "mel_over_thickness",
+    "extend_terminals",
+    "run_index",
+    "n_runs",
     "max_edge_length",
     "max_edge_length_fraction",
     "mesh_vertices",
@@ -78,6 +94,12 @@ _COLUMNS = (
     "volume_relative_error",
     "area_ratio",
     "area_relative_error",
+    "volume_ratio_overlaps",
+    "volume_relative_error_overlaps",
+    "area_ratio_overlaps",
+    "area_relative_error_overlaps",
+    "volume_ratio_sa_norm",
+    "volume_relative_error_sa_norm",
     "runtime_s",
     "rss_before_mb",
     "peak_rss_mb",
@@ -272,7 +294,7 @@ def resample_fractions(mel: float, diagonal: float) -> tuple[float, float]:
     max_len = opts.active_resample_max_over_mel * mel
     if max_len < 2.0 * min_len:
         max_len = 2.0 * min_len
-    min_frac = min_len / diagonal if diagonal > 0 else 0.05
+    min_frac = min_len / diagonal if diagonal > 0 else 0.0
     max_frac = max_len / diagonal if diagonal > 0 else 0.1
     min_frac = float(np.clip(min_frac, 1e-6, 1.0))
     max_frac = float(np.clip(max_frac, min_frac * 2.0, 1.0))
@@ -287,6 +309,70 @@ def _cell(value: object) -> object:
     return value
 
 
+def volume_ratio_distance(row: dict[str, object]) -> float:
+    """Absolute distance of the overlap-subtracted volume ratio from 1.
+
+    Falls back to ``volume_ratio`` when the overlap column is absent.
+    """
+    raw = row.get("volume_ratio_overlaps")
+    if raw is None or (isinstance(raw, str) and not str(raw).strip()):
+        raw = row.get("volume_ratio")
+    if raw is None or (isinstance(raw, str) and not str(raw).strip()):
+        return float("inf")
+    return abs(float(raw) - 1.0)
+
+
+def _extend_terminals_key(row: dict[str, object]) -> str:
+    raw = row.get("extend_terminals", "")
+    if raw is None or str(raw).strip() == "":
+        return ""
+    text = str(raw).strip().lower()
+    if text in {"1", "true", "yes"}:
+        return "1"
+    if text in {"0", "false", "no"}:
+        return "0"
+    return text
+
+
+def _resolution_group_key(row: dict[str, object]) -> tuple[str, float, str]:
+    return (
+        str(row["model"]),
+        float(row["mel_over_thickness"]),
+        _extend_terminals_key(row),
+    )
+
+
+def _replicate_rank_key(row: dict[str, object]) -> tuple[float, float]:
+    runtime_raw = row.get("runtime_s", "")
+    if runtime_raw is None or (isinstance(runtime_raw, str) and not str(runtime_raw).strip()):
+        runtime = float("inf")
+    else:
+        runtime = float(runtime_raw)
+    return (volume_ratio_distance(row), runtime)
+
+
+def select_best_per_resolution(
+    rows: list[dict[str, object]],
+    *,
+    model: str | None = None,
+) -> list[dict[str, object]]:
+    """One row per (model, mel_over_thickness, terminal extension) nearest volume ratio 1."""
+    subset = rows if model is None else [row for row in rows if row["model"] == model]
+    if not subset:
+        return []
+    has_replicates = any("run_index" in row and str(row.get("run_index", "")).strip() != "" for row in subset)
+    if not has_replicates:
+        return list(subset)
+
+    grouped: dict[tuple[str, float], list[dict[str, object]]] = {}
+    for row in subset:
+        grouped.setdefault(_resolution_group_key(row), []).append(row)
+    return [
+        min(group, key=_replicate_rank_key)
+        for _key, group in sorted(grouped.items())
+    ]
+
+
 def write_csv(path: Path, rows: list[dict[str, object]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as handle:
@@ -299,12 +385,17 @@ def write_csv(path: Path, rows: list[dict[str, object]]) -> None:
 
 def apply_scaling(rows: list[dict[str, object]], model_name: str) -> None:
     group = [row for row in rows if row["model"] == model_name]
-    nodes = [float(row["morphology_nodes"]) for row in group]
-    runtime_exponent = loglog_slope(nodes, [float(row["runtime_s"]) for row in group])
-    ram_exponent = loglog_slope(nodes, [float(row["peak_rss_mb"]) for row in group])
+    buckets: dict[str, list[dict[str, object]]] = {}
     for row in group:
-        row["runtime_scaling_exponent"] = runtime_exponent
-        row["ram_scaling_exponent"] = ram_exponent
+        buckets.setdefault(_extend_terminals_key(row), []).append(row)
+    for bucket in buckets.values():
+        picked = select_best_per_resolution(bucket, model=model_name)
+        nodes = [float(row["morphology_nodes"]) for row in picked]
+        runtime_exponent = loglog_slope(nodes, [float(row["runtime_s"]) for row in picked])
+        ram_exponent = loglog_slope(nodes, [float(row["peak_rss_mb"]) for row in picked])
+        for row in bucket:
+            row["runtime_scaling_exponent"] = runtime_exponent
+            row["ram_scaling_exponent"] = ram_exponent
 
 
 def fit_model(
@@ -312,6 +403,7 @@ def fit_model(
     k_values: tuple[float, ...],
     rows: list[dict[str, object]],
     output_path: Path,
+    n_runs: int,
 ) -> None:
     if not model.mesh_path.is_file():
         raise FileNotFoundError(f"Mesh not found for {model.name}: {model.mesh_path}")
@@ -373,48 +465,101 @@ def fit_model(
             max_edge_length=suggested.max_edge_length,
             basis_optimizer_options=suggested.basis_optimizer_options,
         )
-        logger.info(
-            "Fitting %s at mel/t=%.3g (max_edge_length=%.6g)",
-            model.name,
-            k,
-            suggested.max_edge_length,
-        )
-        with WorkingSetMonitor() as monitor:
-            started = time.perf_counter()
-            morphology = CableFitter(options).fit(mesh, skeleton)
-            runtime_s = time.perf_counter() - started
-        rss_before = monitor.baseline / (1024 * 1024)
-        peak_rss = monitor.peak / (1024 * 1024)
-        has_branches = any(morphology.degree[node] > 2 for node in morphology.nodes())
-        validator = Validation(mesh, skeleton, morphology)
-        volume = validator.compare_volumes(account_for_overlaps=has_branches)
-        area = validator.compare_surface_areas(account_for_overlaps=has_branches)
-        row = {
-            **shared,
-            "mel_over_thickness": float(k),
-            "max_edge_length": float(suggested.max_edge_length),
-            "max_edge_length_fraction": float(suggested.max_edge_length_fraction),
-            "morphology_nodes": morphology.number_of_nodes(),
-            "morphology_edges": morphology.number_of_edges(),
-            "volume_ratio": volume["ratio"],
-            "volume_relative_error": volume["relative_error"],
-            "area_ratio": area["ratio"],
-            "area_relative_error": area["relative_error"],
-            "runtime_s": runtime_s,
-            "rss_before_mb": rss_before,
-            "peak_rss_mb": peak_rss,
-            "rss_delta_mb": peak_rss - rss_before,
-        }
-        rows.append(row)
-        write_csv(output_path, rows)
-        logger.info(
-            "%s mel/t=%.3g: %d nodes, runtime=%.3fs, peak RSS=%.1f MB",
-            model.name,
-            k,
-            row["morphology_nodes"],
-            runtime_s,
-            peak_rss,
-        )
+        for run_index in range(n_runs):
+            logger.info(
+                "Fitting %s at mel/t=%.3g run %d/%d (max_edge_length=%.6g)",
+                model.name,
+                k,
+                run_index + 1,
+                n_runs,
+                suggested.max_edge_length,
+            )
+            with WorkingSetMonitor() as monitor:
+                started = time.perf_counter()
+                morphology = CableFitter(options).fit(mesh, skeleton)
+                runtime_s = time.perf_counter() - started
+            rss_before = monitor.baseline / (1024 * 1024)
+            peak_rss = monitor.peak / (1024 * 1024)
+            extended = copy.deepcopy(morphology)
+            n_extended = extended.extend_terminals()
+            variants = (
+                (0, morphology, 0),
+                (1, extended, n_extended),
+            )
+            for extend_flag, graph, n_tips in variants:
+                validator = Validation(mesh, skeleton, graph)
+                volume = validator.compare_volumes(account_for_overlaps=False)
+                area = validator.compare_surface_areas(account_for_overlaps=False)
+                volume_overlaps = validator.compare_volumes(account_for_overlaps=True)
+                area_overlaps = validator.compare_surface_areas(account_for_overlaps=True)
+                try:
+                    graph.scale_radii_to_match_mesh(
+                        mesh,
+                        metric="surface_area",
+                        account_for_overlaps=False,
+                    )
+                    volume_sa_norm = Validation(mesh, skeleton, graph).compare_volumes(
+                        account_for_overlaps=False
+                    )
+                    volume_ratio_sa_norm = volume_sa_norm["ratio"]
+                    volume_relative_error_sa_norm = volume_sa_norm["relative_error"]
+                except ValueError as exc:
+                    logger.warning(
+                        "%s mel/t=%.3g run %d/%d extend=%d: surface-area normalization skipped: %s",
+                        model.name,
+                        k,
+                        run_index + 1,
+                        n_runs,
+                        extend_flag,
+                        exc,
+                    )
+                    volume_ratio_sa_norm = float("nan")
+                    volume_relative_error_sa_norm = float("nan")
+                row = {
+                    **shared,
+                    "mel_over_thickness": float(k),
+                    "extend_terminals": extend_flag,
+                    "run_index": run_index,
+                    "n_runs": n_runs,
+                    "max_edge_length": float(suggested.max_edge_length),
+                    "max_edge_length_fraction": float(suggested.max_edge_length_fraction),
+                    "morphology_nodes": graph.number_of_nodes(),
+                    "morphology_edges": graph.number_of_edges(),
+                    "volume_ratio": volume["ratio"],
+                    "volume_relative_error": volume["relative_error"],
+                    "area_ratio": area["ratio"],
+                    "area_relative_error": area["relative_error"],
+                    "volume_ratio_overlaps": volume_overlaps["ratio"],
+                    "volume_relative_error_overlaps": volume_overlaps["relative_error"],
+                    "area_ratio_overlaps": area_overlaps["ratio"],
+                    "area_relative_error_overlaps": area_overlaps["relative_error"],
+                    "volume_ratio_sa_norm": volume_ratio_sa_norm,
+                    "volume_relative_error_sa_norm": volume_relative_error_sa_norm,
+                    "runtime_s": runtime_s,
+                    "rss_before_mb": rss_before,
+                    "peak_rss_mb": peak_rss,
+                    "rss_delta_mb": peak_rss - rss_before,
+                }
+                rows.append(row)
+                write_csv(output_path, rows)
+                logger.info(
+                    "%s mel/t=%.3g run %d/%d extend=%d (%d tips): %d nodes, "
+                    "vol=%.4f vol_ov=%.4f area=%.4f area_ov=%.4f vol_sa_norm=%.4f, runtime=%.3fs, peak RSS=%.1f MB",
+                    model.name,
+                    k,
+                    run_index + 1,
+                    n_runs,
+                    extend_flag,
+                    n_tips,
+                    row["morphology_nodes"],
+                    row["volume_ratio"],
+                    row["volume_ratio_overlaps"],
+                    row["area_ratio"],
+                    row["area_ratio_overlaps"],
+                    row["volume_ratio_sa_norm"],
+                    runtime_s,
+                    peak_rss,
+                )
 
     apply_scaling(rows, model.name)
     write_csv(output_path, rows)
@@ -445,31 +590,57 @@ def parse_args() -> argparse.Namespace:
         help="Comma-separated max_edge_length / thickness.median values.",
     )
     parser.add_argument(
+        "--replicates",
+        type=int,
+        default=_DEFAULT_N_RUNS,
+        help="Independent fits per model and mel/t (basis optimization is stochastic).",
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         help="Logging level (DEBUG, INFO, WARNING, ERROR).",
+    )
+    parser.add_argument(
+        "--log-file",
+        default=None,
+        help=(
+            "Also write logs to this path (parent dirs are created). "
+            "Relative paths are resolved from the repo root."
+        ),
     )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    configure_logging(level=getattr(logging, str(args.log_level).upper()))
+    log_file = None
+    if args.log_file:
+        log_file = Path(args.log_file)
+        if not log_file.is_absolute():
+            log_file = _REPO_ROOT / log_file
+    configure_logging(
+        level=getattr(logging, str(args.log_level).upper()),
+        log_file=log_file,
+    )
     models = select_models(args.models)
     k_values = parse_k_values(args.mel_over_thickness)
     output_path = Path(args.output)
     if not output_path.is_absolute():
         output_path = _REPO_ROOT / output_path
+    n_runs = int(args.replicates)
+    if n_runs < 1:
+        raise SystemExit("--replicates must be at least 1.")
 
     rows: list[dict[str, object]] = []
     logger.info(
-        "Complexity sweep: %d models, mel/t=%s, output=%s",
+        "Complexity sweep: %d models, %d replicate(s) each, mel/t=%s, output=%s",
         len(models),
+        n_runs,
         ", ".join(f"{k:g}" for k in k_values),
         output_path,
     )
     for model in models:
-        fit_model(model, k_values, rows, output_path)
+        fit_model(model, k_values, rows, output_path, n_runs)
     logger.info("Wrote %d rows to %s", len(rows), output_path)
 
 
