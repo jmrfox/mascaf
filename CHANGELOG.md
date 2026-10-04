@@ -10,6 +10,35 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ---
 
+## [1.5.0] — 2026-10-04
+
+### Added
+
+- Complexity summary exports `radius_relative_error` and
+  `radius_relative_error_spread` (uniform scale from volume and area ratios).
+- `select_best_extend_per_demo` in `summarize_complexity.py` picks the demo
+  row with smallest overlap-subtracted volume error per geometry.
+- Paper-scale complexity outputs under `outputs/` (`complexity_analysis_paper.csv`,
+  `complexity_summary_paper.csv`) and archived prior sweep artifacts.
+
+### Changed
+
+- Fit oracle default `mel_over_thickness` is 2 (was 1).
+- Fit oracle `max_edge_length` is always `mel_over_thickness ×` SDF thickness
+  median; it is no longer reduced for sparse skeleton polylines (cable
+  resampling sets morphology resolution independently).
+- Fit oracle basis `n_rays` default is 6 (± Cartesian axes). Values other
+  than 6 use Fibonacci sphere sampling in `BasisOptimizer`; the oracle no
+  longer bumps compact meshes to 12 rays.
+- Complexity sweeps: single `mel/t` values allowed; demo geometries use
+  notebook `max_edge_length`, skip basis optimization, and only branching
+  compares `extend_terminals` variants.
+- `MorphologyGraph.extend_terminals` default `length_scale` is 0.5 again
+  (docstring match; fixes accidental 1.0 default).
+- Notebook `cell_fit_figures` updated for current oracle and validation APIs.
+
+---
+
 ## [1.4.0] — 2026-09-29
 
 ### Added

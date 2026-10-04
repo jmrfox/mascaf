@@ -1,0 +1,7 @@
+model,extend_terminals,mesh_vertices,skeleton_nodes,n_branches,cyclomatic_number,morphology_nodes,runtime_s,peak_rss_mb,volume_relative_error,area_relative_error,volume_relative_error_overlaps,area_relative_error_overlaps,runtime_scaling_exponent
+branching,0,1417,137,2,0,8,0.770634,166.066,-0.212822,-0.115046,-0.310983,-0.185758,1.56343
+branching,1,1417,137,2,0,12,0.759575,165.984,-0.0520905,-0.0722948,-0.150341,-0.143056,0.633113
+cylinder,0,34,4,0,0,7,0.499904,152.543,-0.0183018,-0.0224548,-0.0183018,-0.0224548,-0.355142
+cylinder,1,34,4,0,0,9,0.339249,152.457,0.0391779,0.00520736,0.0391779,0.00520736,2.74787
+torus,0,512,32,0,1,19,2.55378,159.148,0.00225642,-0.0131964,0.00225642,-0.0131964,0.297822
+torus,1,512,32,0,1,19,2.55378,159.148,0.00225642,-0.0131964,0.00225642,-0.0131964,0.297822

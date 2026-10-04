@@ -1232,7 +1232,11 @@ class BasisOptimizer:
         return out
 
     def _get_uniform_sphere_directions(self, n_points: int) -> np.ndarray:
-        """Generate approximately uniform directions on the unit sphere."""
+        """Unit directions for centering rays.
+
+        ``n_points == 6`` uses ±x, ±y, ±z. Other counts use a Fibonacci
+        (golden-spiral) sphere sample.
+        """
         if n_points == 6:
             return np.array(
                 [

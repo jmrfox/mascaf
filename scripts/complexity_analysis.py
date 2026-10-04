@@ -3,7 +3,12 @@
 Fits cylinder, torus, branching, and the toric spines at three
 thickness-relative ``max_edge_length`` values. Each (model, resolution)
 case is fit ``N`` times (default 3) because basis optimization is
-stochastic. Each fit is then scored twice: as fitted, and after
+stochastic. Demo geometries (``group=demo``) use notebook ``max_edge_length`` values,
+skip basis optimization, and use a single replicate. Only ``branching`` is
+scored with and without ``extend_terminals()``; other demos use the
+unextended cable only. Summarization keeps the extend setting with lower
+overlap-subtracted volume error for demos.
+Each fit is then scored twice for spines and branching: as fitted, and after
 ``extend_terminals()`` with its default length and radius scales.
 Volume and surface-area errors are recorded with and without branch
 overlap corrections. Each cable is then scaled so its total surface area
@@ -57,6 +62,12 @@ logger = logging.getLogger(__name__)
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_OUTPUT = _REPO_ROOT / "outputs" / "complexity_analysis.csv"
 _DEMO_NAMES = ("cylinder", "torus", "branching")
+# Notebook ``max_edge_length`` values (see ``notebooks/demo_geometries/*_mascaf.py``).
+_DEMO_MAX_EDGE_LENGTH: dict[str, float] = {
+    "cylinder": 3.0,
+    "torus": 1.0,
+    "branching": 1.0,
+}
 _SPINE_IDS = (1, 2, 3, 4, 21, 24, 48, 67, 76)
 _DEFAULT_K = (1.0, 2.0, 3.0)
 _DEFAULT_N_RUNS = 3
@@ -280,8 +291,8 @@ def select_models(spec: str | None) -> list[ModelSpec]:
 
 def parse_k_values(text: str) -> tuple[float, ...]:
     values = tuple(float(part.strip()) for part in text.split(",") if part.strip())
-    if len(values) < 2:
-        raise SystemExit("--mel-over-thickness needs at least two values to estimate scaling.")
+    if len(values) < 1:
+        raise SystemExit("--mel-over-thickness requires at least one value.")
     if any(k <= 0 for k in values):
         raise SystemExit("--mel-over-thickness values must be positive.")
     return values
@@ -398,6 +409,40 @@ def apply_scaling(rows: list[dict[str, object]], model_name: str) -> None:
             row["ram_scaling_exponent"] = ram_exponent
 
 
+def resolve_max_edge_length(
+    model: ModelSpec, k: float, thickness_median: float
+) -> tuple[float, float]:
+    """Return ``(max_edge_length, mel_over_thickness)`` for CSV reporting."""
+    if model.name in _DEMO_MAX_EDGE_LENGTH:
+        mel = float(_DEMO_MAX_EDGE_LENGTH[model.name])
+        k_report = mel / thickness_median if thickness_median > 0 else float(k)
+        return mel, k_report
+    mel = float(k) * float(thickness_median)
+    return mel, float(k)
+
+
+def effective_n_runs(model: ModelSpec, n_runs: int) -> int:
+    """Demo geometries skip stochastic basis optimization and use one replicate."""
+    if model.group == "demo":
+        return 1
+    return n_runs
+
+
+def result_variants_for_model(
+    model: ModelSpec,
+    morphology: object,
+    extended: object,
+    n_extended: int,
+) -> tuple[tuple[int, object, int], ...]:
+    """Return (extend_flag, graph, n_tips) rows to score for this model."""
+    if model.group == "demo" and model.name != "branching":
+        return ((0, morphology, 0),)
+    return (
+        (0, morphology, 0),
+        (1, extended, n_extended),
+    )
+
+
 def fit_model(
     model: ModelSpec,
     k_values: tuple[float, ...],
@@ -449,7 +494,16 @@ def fit_model(
     }
 
     for k in k_values:
-        mel = float(k) * float(thickness.median)
+        mel, mel_k_report = resolve_max_edge_length(
+            model, k, float(thickness.median)
+        )
+        if model.name in _DEMO_MAX_EDGE_LENGTH:
+            logger.info(
+                "%s: demo max_edge_length=%.6g (mel/t=%.4g)",
+                model.name,
+                mel,
+                mel_k_report,
+            )
         min_frac, max_frac = resample_fractions(mel, diagonal)
         suggested = suggest_fit_parameters(
             mesh,
@@ -461,17 +515,29 @@ def fit_model(
                 "active_resample_max_fraction": max_frac,
             },
         )
+        model_runs = effective_n_runs(model, n_runs)
+        basis_opts = (
+            None
+            if model.group == "demo"
+            else suggested.basis_optimizer_options
+        )
+        if model.group == "demo":
+            logger.info(
+                "%s: demo geometry — skipping basis optimization, %d replicate",
+                model.name,
+                model_runs,
+            )
         options = FitOptions(
             max_edge_length=suggested.max_edge_length,
-            basis_optimizer_options=suggested.basis_optimizer_options,
+            basis_optimizer_options=basis_opts,
         )
-        for run_index in range(n_runs):
+        for run_index in range(model_runs):
             logger.info(
                 "Fitting %s at mel/t=%.3g run %d/%d (max_edge_length=%.6g)",
                 model.name,
-                k,
+                mel_k_report,
                 run_index + 1,
-                n_runs,
+                model_runs,
                 suggested.max_edge_length,
             )
             with WorkingSetMonitor() as monitor:
@@ -482,9 +548,8 @@ def fit_model(
             peak_rss = monitor.peak / (1024 * 1024)
             extended = copy.deepcopy(morphology)
             n_extended = extended.extend_terminals()
-            variants = (
-                (0, morphology, 0),
-                (1, extended, n_extended),
+            variants = result_variants_for_model(
+                model, morphology, extended, n_extended
             )
             for extend_flag, graph, n_tips in variants:
                 validator = Validation(mesh, skeleton, graph)
@@ -509,7 +574,7 @@ def fit_model(
                         model.name,
                         k,
                         run_index + 1,
-                        n_runs,
+                        model_runs,
                         extend_flag,
                         exc,
                     )
@@ -517,10 +582,10 @@ def fit_model(
                     volume_relative_error_sa_norm = float("nan")
                 row = {
                     **shared,
-                    "mel_over_thickness": float(k),
+                    "mel_over_thickness": float(mel_k_report),
                     "extend_terminals": extend_flag,
                     "run_index": run_index,
-                    "n_runs": n_runs,
+                    "n_runs": model_runs,
                     "max_edge_length": float(suggested.max_edge_length),
                     "max_edge_length_fraction": float(suggested.max_edge_length_fraction),
                     "morphology_nodes": graph.number_of_nodes(),
@@ -548,7 +613,7 @@ def fit_model(
                     model.name,
                     k,
                     run_index + 1,
-                    n_runs,
+                    model_runs,
                     extend_flag,
                     n_tips,
                     row["morphology_nodes"],

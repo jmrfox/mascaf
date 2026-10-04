@@ -59,25 +59,23 @@ class SuggestedFitParameters:
 class FitOracleOptions:
     """Knobs for :func:`suggest_fit_parameters`.
 
-    Default ``mel_over_thickness`` is 1 (one local thickness). Useful
-    values are 1, 2, and 3. For compact spines (short skeleton /
-    thickness), mel is also capped by ``skeleton_length / n_target`` so the
-    basis is not under-sampled.
+    Default ``mel_over_thickness`` is 2 (twice the local thickness). Useful
+    values are 1, 2, and 3. Cable resolution does not depend on skeleton
+    polyline spacing; :class:`~mascaf.cable_fitting.CableFitter` resamples
+    unbranching sections to ``max_edge_length`` after the skeleton is read.
 
     ``active_resample_min_over_mel`` stays at 0. A merge threshold that is a
     sizable fraction of ``max_edge_length`` deletes short branches.
     """
 
-    mel_over_thickness: float = 1.0
+    mel_over_thickness: float = 2.0
     mel_over_thickness_min: float = 1.0
     mel_over_thickness_max: float = 3.0
-    min_target_edges: int = 12
-    """Lower bound on target edge count when capping mel by skeleton length."""
     sdf_n_samples: int = 200
     sdf_n_rays: int = 8
     sdf_seed: Optional[int] = 0
-    # Basis defaults informed by TS2 forcing sweeps
-    n_rays: int = 12
+    # Basis defaults: six axis-aligned centering rays (see BasisOptimizer).
+    n_rays: int = 6
     ray_jitter: float = 0.1
     localization_beta: float = 2.0
     step_scale: float = 0.5
@@ -190,34 +188,12 @@ def suggest_fit_parameters(
                 opts.mel_over_thickness_max,
             )
         )
-        mel_thickness = k * t
-        n_target = max(
-            int(opts.min_target_edges),
-            int(
-                3 * feats.cyclomatic_number
-                + feats.n_branches
-                + feats.n_terminals
-            ),
-        )
-        mel_length = (
-            feats.skeleton_length / n_target
-            if feats.skeleton_length > 0 and n_target > 0
-            else mel_thickness
-        )
-        mel = mel_thickness
+        mel = k * t
         k_used = k
         rationale.append(
             f"thickness-based mel = {k:.3g} × SDF median ({t:.6g}) "
-            f"→ {mel_thickness:.6g}"
+            f"→ {mel:.6g}"
         )
-        if mel_length + 1e-12 < mel_thickness:
-            mel = mel_length
-            k_used = mel / t
-            rationale.append(
-                f"capped by skeleton sampling density: L/n_target = "
-                f"{feats.skeleton_length:.6g}/{n_target} → {mel_length:.6g} "
-                f"(mel/t={k_used:.4g})"
-            )
         rationale.append(
             f"equivalent bbox fraction = {mel / D:.4g} "
             f"(D={D:.6g}, D/t={D / t:.4g}, L/t="
@@ -247,15 +223,12 @@ def suggest_fit_parameters(
     min_frac = float(np.clip(min_frac, 1e-6, 1.0))
     max_frac = float(np.clip(max_frac, min_frac * 2.0, 1.0))
 
-    # Slightly denser rays / jitter when the mesh is “compact” (small D/t)
     n_rays = opts.n_rays
     ray_jitter = opts.ray_jitter
     if np.isfinite(t) and t > 0 and D / t < 12.0:
-        n_rays = max(n_rays, 12)
         ray_jitter = max(ray_jitter, 0.1)
         rationale.append(
-            f"Compact extent (D/t={D / t:.3g}): using n_rays>={n_rays}, "
-            f"ray_jitter>={ray_jitter}"
+            f"Compact extent (D/t={D / t:.3g}): ray_jitter>={ray_jitter}"
         )
 
     basis = BasisOptimizerOptions(

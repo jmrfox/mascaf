@@ -9,7 +9,16 @@ script keeps the replicate whose overlap-subtracted volume ratio is nearest
 This script keeps the scaling estimate and reports size, cost, and
 overlap-subtracted volume and surface-area errors, plus the volume error
 after scaling radii to the mesh surface area, at the oracle's default
-resolution (``mel_over_thickness`` = 1).
+resolution (``mel_over_thickness`` = 2).
+
+``radius_relative_error`` and ``radius_relative_error_spread`` infer an
+equivalent uniform radius-scale bias from the same overlap-subtracted
+volume and area ratios (signed fractions, like ``volume_relative_error``):
+``delta_* = V^(1/6) A^(1/4) - 1`` with spread ``|delta_V - delta_A| / 2``
+where ``delta_V = V^(1/3) - 1`` and ``delta_A = A^(1/2) - 1``.
+
+For demo models, when both ``extend_terminals`` settings exist, only the row
+with smaller ``|volume_relative_error_overlaps|`` is kept (typical user workflow).
 
 The script also writes a runtime-versus-skeleton-nodes scatter beside the
 summary CSV.
@@ -28,15 +37,15 @@ import math
 from collections import OrderedDict
 from pathlib import Path
 
-from complexity_analysis import select_best_per_resolution
+from complexity_analysis import _DEMO_NAMES, select_best_per_resolution
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_INPUT = _REPO_ROOT / "outputs" / "complexity_analysis.csv"
 _DEFAULT_OUTPUT = _REPO_ROOT / "outputs" / "complexity_summary.csv"
-_REFERENCE_K = 1.0
+_REFERENCE_K = 2.0
 
 # Size columns do not depend on resolution. Cost, morphology size, and
-# volume/area errors are taken at mel/t = 1 for each terminal-extension
+# volume/area errors are taken at mel/t = 2 for each terminal-extension
 # setting. The exponent is the log-log slope of runtime versus morphology
 # node count across resolutions within that setting.
 _COLUMNS = (
@@ -51,6 +60,8 @@ _COLUMNS = (
     "peak_rss_mb",
     "volume_relative_error",
     "area_relative_error",
+    "radius_relative_error",
+    "radius_relative_error_spread",
     "volume_relative_error_sa_norm",
     "runtime_scaling_exponent",
 )
@@ -80,6 +91,62 @@ _ERROR_FIELDS = {
     ),
 }
 _SCALING_FIELDS = ("runtime_scaling_exponent",)
+_VOLUME_RATIO_KEYS = ("volume_ratio_overlaps", "volume_ratio")
+_VOLUME_REL_KEYS = (
+    "volume_relative_error_overlaps",
+    "volume_relative_error",
+)
+_AREA_RATIO_KEYS = ("area_ratio_overlaps", "area_ratio")
+_AREA_REL_KEYS = (
+    "area_relative_error_overlaps",
+    "area_relative_error",
+)
+
+
+def estimate_radius_relative_error(
+    v_ratio: float,
+    a_ratio: float,
+) -> tuple[float, float]:
+    """Infer signed uniform radius-scale error and vol/area disagreement.
+
+    Returns ``(delta_star, spread)`` as fractions (0.05 = 5%). When ratios
+    are invalid, returns ``(nan, nan)``.
+    """
+    if not (
+        math.isfinite(v_ratio)
+        and math.isfinite(a_ratio)
+        and v_ratio > 0.0
+        and a_ratio > 0.0
+    ):
+        return (float("nan"), float("nan"))
+    delta_v = v_ratio ** (1.0 / 3.0) - 1.0
+    delta_a = a_ratio**0.5 - 1.0
+    lambda_star = v_ratio ** (1.0 / 6.0) * a_ratio ** (1.0 / 4.0)
+    delta_star = lambda_star - 1.0
+    spread = abs(delta_v - delta_a) / 2.0
+    return (delta_star, spread)
+
+
+def _ratio_from_row(
+    row: dict[str, str],
+    ratio_keys: tuple[str, ...],
+    rel_keys: tuple[str, ...],
+) -> float:
+    for key in ratio_keys:
+        raw = row.get(key, "")
+        if raw is not None and str(raw).strip() != "":
+            value = _float(raw)
+            if math.isfinite(value) and value > 0.0:
+                return value
+    for key in rel_keys:
+        raw = row.get(key, "")
+        if raw is not None and str(raw).strip() != "":
+            rel = _float(raw)
+            if math.isfinite(rel):
+                ratio = 1.0 + rel
+                if ratio > 0.0:
+                    return ratio
+    return float("nan")
 
 
 def _float(text: str) -> float:
@@ -132,6 +199,35 @@ def _summary_key(row: dict[str, str]) -> tuple[str, str]:
     return (name, extend)
 
 
+def _overlap_volume_error_magnitude(row: dict[str, str]) -> float:
+    for key in ("volume_relative_error_overlaps", "volume_relative_error"):
+        raw = row.get(key, "")
+        if raw is not None and str(raw).strip() != "":
+            return abs(_float(raw))
+    return float("inf")
+
+
+def select_best_extend_per_demo(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Keep one extend_terminals row per demo fit (lowest |overlap volume error|)."""
+    demo_set = set(_DEMO_NAMES)
+    kept: list[dict[str, str]] = []
+    buckets: dict[tuple[str, str, str], list[dict[str, str]]] = {}
+    for row in rows:
+        model = row.get("model", "").strip()
+        if model not in demo_set and row.get("group") != "demo":
+            kept.append(row)
+            continue
+        bucket_key = (
+            model,
+            str(row.get("mel_over_thickness", "")),
+            str(row.get("run_index", "")),
+        )
+        buckets.setdefault(bucket_key, []).append(row)
+    for group in buckets.values():
+        kept.append(min(group, key=_overlap_volume_error_magnitude))
+    return kept
+
+
 def summarize(rows: list[dict[str, str]]) -> list[dict[str, str]]:
     grouped: OrderedDict[tuple[str, str], list[dict[str, str]]] = OrderedDict()
     for row in rows:
@@ -142,10 +238,9 @@ def summarize(rows: list[dict[str, str]]) -> list[dict[str, str]]:
 
     summary: list[dict[str, str]] = []
     for (name, extend), model_rows in grouped.items():
-        if len(model_rows) < 2:
+        if len(model_rows) < 1:
             raise ValueError(
-                f"{name} extend_terminals={extend or 'unset'} has "
-                f"{len(model_rows)} resolution row(s); scaling needs at least two."
+                f"{name} extend_terminals={extend or 'unset'} has no resolution rows."
             )
         reference = _reference_row(model_rows)
         record = {"model": name, "extend_terminals": extend}
@@ -161,6 +256,11 @@ def summarize(rows: list[dict[str, str]]) -> list[dict[str, str]]:
                     raw = candidate
                     break
             record[field] = _format(_float(raw))
+        v_ratio = _ratio_from_row(reference, _VOLUME_RATIO_KEYS, _VOLUME_REL_KEYS)
+        a_ratio = _ratio_from_row(reference, _AREA_RATIO_KEYS, _AREA_REL_KEYS)
+        radius_err, radius_spread = estimate_radius_relative_error(v_ratio, a_ratio)
+        record["radius_relative_error"] = _format(radius_err)
+        record["radius_relative_error_spread"] = _format(radius_spread)
         for field in _SCALING_FIELDS:
             record[field] = _format(_consistent(model_rows, field))
         summary.append(record)
@@ -251,7 +351,9 @@ def main() -> None:
     if not input_path.is_file():
         raise SystemExit(f"Input CSV not found: {input_path}")
     raw_rows = read_rows(input_path)
-    rows = summarize(select_best_per_resolution(raw_rows))
+    filtered = select_best_per_resolution(raw_rows)
+    filtered = select_best_extend_per_demo(filtered)
+    rows = summarize(filtered)
     write_rows(output_path, rows)
     figure_path = output_path.with_name(f"{output_path.stem}_runtime.png")
     plot_runtime(rows, figure_path)

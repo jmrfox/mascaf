@@ -60,13 +60,14 @@ def test_oracle_uses_thickness_and_differs_by_bbox_fraction():
     b = suggest_fit_parameters(mesh_large, sk_large, oracle_options=opts)
     assert a.features.thickness.median == pytest.approx(2.0 * minor, rel=0.4)
     assert b.features.thickness.median == pytest.approx(2.0 * minor, rel=0.4)
-    # Compact (small major) is length-capped; elongated uses thickness-based mel
-    assert a.max_edge_length < b.max_edge_length
-    assert a.mel_over_thickness < b.mel_over_thickness
+    assert a.max_edge_length == pytest.approx(b.max_edge_length, rel=0.05)
+    assert a.mel_over_thickness == pytest.approx(2.0, rel=0.05)
+    assert b.mel_over_thickness == pytest.approx(2.0, rel=0.05)
+    assert a.max_edge_length_fraction > b.max_edge_length_fraction
 
 
-def test_oracle_caps_mel_on_compact_skeleton():
-    """Short skeleton relative to thickness must not get mel ~ 2t (too coarse)."""
+def test_oracle_mel_independent_of_skeleton_sampling():
+    """Sparse skeleton polylines must not reduce mel below mel/t × thickness."""
     minor = 1.0
     mesh = example_mesh(
         "torus",
@@ -75,20 +76,24 @@ def test_oracle_caps_mel_on_compact_skeleton():
         major_sections=40,
         minor_sections=20,
     )
-    sk = _torus_skeleton(major=3.0, n=16)
+    sk_sparse = _torus_skeleton(major=3.0, n=8)
+    sk_dense = _torus_skeleton(major=3.0, n=48)
+    opts = FitOracleOptions(mel_over_thickness=2.0, sdf_n_samples=40, sdf_seed=0)
+    sparse = suggest_fit_parameters(mesh, sk_sparse, oracle_options=opts)
+    dense = suggest_fit_parameters(mesh, sk_dense, oracle_options=opts)
+    t = sparse.features.thickness.median
+    assert sparse.max_edge_length == pytest.approx(2.0 * t, rel=0.05)
+    assert dense.max_edge_length == pytest.approx(2.0 * t, rel=0.05)
+    assert sparse.mel_over_thickness == pytest.approx(2.0, rel=0.05)
+
+
+def test_oracle_default_basis_n_rays_is_six():
+    mesh = example_mesh("torus", major_radius=4.0, minor_radius=1.0)
+    sk = _torus_skeleton(major=4.0)
     sug = suggest_fit_parameters(
-        mesh,
-        sk,
-        oracle_options=FitOracleOptions(
-            mel_over_thickness=2.0,
-            min_target_edges=12,
-            sdf_n_samples=40,
-            sdf_seed=0,
-        ),
+        mesh, sk, oracle_options=FitOracleOptions(sdf_n_samples=30, sdf_seed=0)
     )
-    t = sug.features.thickness.median
-    assert sug.max_edge_length < 2.0 * t * 0.95
-    assert sug.mel_over_thickness < 2.0
+    assert sug.basis_optimizer_options.n_rays == 6
 
 
 def test_oracle_overrides():

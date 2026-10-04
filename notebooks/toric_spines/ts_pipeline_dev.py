@@ -55,6 +55,9 @@ for line in suggested.rationale:
     print(f"Oracle: {line}")
 
 params = suggested
+params.basis_optimizer_options.active_resample = False
+params.basis_optimizer_options.active_resample_min_fraction = 0.02
+# params.basis_optimizer_options.active_resample_max_fraction = 0.4
 
 mel_tag = f"{params.max_edge_length:0.2f}"
 

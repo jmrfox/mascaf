@@ -759,7 +759,7 @@ class MorphologyGraph(Graph3D):
     def extend_terminals(
         self,
         *,
-        length_scale: float = 1.0,
+        length_scale: float = 0.5,
         radius_fraction: float = 0.5,
     ) -> int:
         """Continue each branch tip by one segment beyond the current terminal.

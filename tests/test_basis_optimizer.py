@@ -40,6 +40,7 @@ def test_options_new_force_defaults():
     assert opts.step_cap_factor == 0.5
     assert opts.alpha_s == 0.1
     assert opts.step_scale == 0.5
+    assert opts.n_rays == 6
     assert opts.ray_jitter == 0.0
     assert opts.active_resample is False
     assert opts.active_resample_min_fraction is None
@@ -75,6 +76,31 @@ def test_centering_force_near_zero_at_sphere_center(unit_sphere):
     opt = BasisOptimizer(graph, unit_sphere, BasisOptimizerOptions(n_rays=6))
     force = opt._compute_centering_force(np.array([0.0, 0.0, 0.0]))
     assert np.linalg.norm(force) < 0.05
+
+
+def test_uniform_sphere_directions_six_use_cartesian_axes():
+    graph = _chain_graph([np.array([0.0, 0.0, 0.0])])
+    opt = BasisOptimizer(
+        graph,
+        trimesh.creation.icosphere(subdivisions=2),
+        BasisOptimizerOptions(),
+    )
+    dirs = opt._get_uniform_sphere_directions(6)
+    expected = np.array(
+        [
+            [1.0, 0.0, 0.0],
+            [-1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, -1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, -1.0],
+        ]
+    )
+    np.testing.assert_allclose(dirs, expected)
+    other = opt._get_uniform_sphere_directions(12)
+    assert other.shape == (12, 3)
+    for axis in dirs:
+        assert not any(np.allclose(axis, row, atol=1e-6) for row in other)
 
 
 def test_ray_jitter_perturbs_directions_independently():
