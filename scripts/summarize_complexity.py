@@ -6,10 +6,12 @@ the input includes multiple stochastic replicates per resolution, this
 script keeps the replicate whose overlap-subtracted volume ratio is nearest
 1 at each resolution and terminal-extension setting before summarizing.
 
-This script keeps the scaling estimate and reports size, cost, and
+This script reports size, cost, and
 overlap-subtracted volume and surface-area errors, plus the volume error
 after scaling radii to the mesh surface area, at the oracle's default
-resolution (``mel_over_thickness`` = 2).
+resolution (``mel_over_thickness`` = 2). The summary also records
+``max_edge_length`` (MEL) and ``mel_over_thickness`` (mel/t) from that
+same reference row.
 
 ``radius_relative_error`` and ``radius_relative_error_spread`` infer an
 equivalent uniform radius-scale bias from the same overlap-subtracted
@@ -17,11 +19,12 @@ volume and area ratios (signed fractions, like ``volume_relative_error``):
 ``delta_* = V^(1/6) A^(1/4) - 1`` with spread ``|delta_V - delta_A| / 2``
 where ``delta_V = V^(1/3) - 1`` and ``delta_A = A^(1/2) - 1``.
 
-For demo models, when both ``extend_terminals`` settings exist, only the row
-with smaller ``|volume_relative_error_overlaps|`` is kept (typical user workflow).
+Reference models emit a single ``extend_terminals`` setting each; spines emit
+both 0 and 1 (summarized as separate rows).
 
-The script also writes a runtime-versus-skeleton-nodes scatter beside the
-summary CSV.
+The script also writes runtime scatter plots (one row per model at
+``extend_terminals=0`` when present, since extension does not change fit time)
+versus skeleton nodes and versus morphology (cable) nodes.
 
 Example::
 
@@ -37,23 +40,24 @@ import math
 from collections import OrderedDict
 from pathlib import Path
 
-from complexity_analysis import _DEMO_NAMES, select_best_per_resolution
+from complexity_analysis import select_best_per_resolution
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_INPUT = _REPO_ROOT / "outputs" / "complexity_analysis.csv"
 _DEFAULT_OUTPUT = _REPO_ROOT / "outputs" / "complexity_summary.csv"
 _REFERENCE_K = 2.0
 
-# Size columns do not depend on resolution. Cost, morphology size, and
-# volume/area errors are taken at mel/t = 2 for each terminal-extension
-# setting. The exponent is the log-log slope of runtime versus morphology
-# node count across resolutions within that setting.
+# Size columns do not depend on resolution. Cost, morphology size, the cable
+# cyclomatic number, and volume/area errors are taken at mel/t = 2.
 _COLUMNS = (
     "model",
     "extend_terminals",
+    "max_edge_length",
+    "mel_over_thickness",
     "mesh_vertices",
     "skeleton_nodes",
     "n_branches",
+    "genus",
     "cyclomatic_number",
     "morphology_nodes",
     "runtime_s",
@@ -63,17 +67,19 @@ _COLUMNS = (
     "radius_relative_error",
     "radius_relative_error_spread",
     "volume_relative_error_sa_norm",
-    "runtime_scaling_exponent",
 )
 
 _SIZE_FIELDS = (
     "mesh_vertices",
     "skeleton_nodes",
     "n_branches",
-    "cyclomatic_number",
+    "genus",
 )
 _REFERENCE_FIELDS = (
+    "max_edge_length",
+    "mel_over_thickness",
     "morphology_nodes",
+    "cyclomatic_number",
     "runtime_s",
     "peak_rss_mb",
     "volume_relative_error_sa_norm",
@@ -90,7 +96,6 @@ _ERROR_FIELDS = {
         "area_relative_error",
     ),
 }
-_SCALING_FIELDS = ("runtime_scaling_exponent",)
 _VOLUME_RATIO_KEYS = ("volume_ratio_overlaps", "volume_ratio")
 _VOLUME_REL_KEYS = (
     "volume_relative_error_overlaps",
@@ -199,35 +204,6 @@ def _summary_key(row: dict[str, str]) -> tuple[str, str]:
     return (name, extend)
 
 
-def _overlap_volume_error_magnitude(row: dict[str, str]) -> float:
-    for key in ("volume_relative_error_overlaps", "volume_relative_error"):
-        raw = row.get(key, "")
-        if raw is not None and str(raw).strip() != "":
-            return abs(_float(raw))
-    return float("inf")
-
-
-def select_best_extend_per_demo(rows: list[dict[str, str]]) -> list[dict[str, str]]:
-    """Keep one extend_terminals row per demo fit (lowest |overlap volume error|)."""
-    demo_set = set(_DEMO_NAMES)
-    kept: list[dict[str, str]] = []
-    buckets: dict[tuple[str, str, str], list[dict[str, str]]] = {}
-    for row in rows:
-        model = row.get("model", "").strip()
-        if model not in demo_set and row.get("group") != "demo":
-            kept.append(row)
-            continue
-        bucket_key = (
-            model,
-            str(row.get("mel_over_thickness", "")),
-            str(row.get("run_index", "")),
-        )
-        buckets.setdefault(bucket_key, []).append(row)
-    for group in buckets.values():
-        kept.append(min(group, key=_overlap_volume_error_magnitude))
-    return kept
-
-
 def summarize(rows: list[dict[str, str]]) -> list[dict[str, str]]:
     grouped: OrderedDict[tuple[str, str], list[dict[str, str]]] = OrderedDict()
     for row in rows:
@@ -261,8 +237,6 @@ def summarize(rows: list[dict[str, str]]) -> list[dict[str, str]]:
         radius_err, radius_spread = estimate_radius_relative_error(v_ratio, a_ratio)
         record["radius_relative_error"] = _format(radius_err)
         record["radius_relative_error_spread"] = _format(radius_spread)
-        for field in _SCALING_FIELDS:
-            record[field] = _format(_consistent(model_rows, field))
         summary.append(record)
     return summary
 
@@ -280,24 +254,48 @@ def write_rows(path: Path, rows: list[dict[str, str]]) -> None:
         writer.writerows(rows)
 
 
-def plot_runtime(rows: list[dict[str, str]], path: Path) -> None:
-    """Scatter runtime against skeleton node count, one point per model."""
+def rows_for_runtime_plots(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    """One summary row per model; terminal extension does not change fit runtime."""
+    by_model: dict[str, list[dict[str, str]]] = {}
+    for row in rows:
+        by_model.setdefault(row["model"].strip(), []).append(row)
+    picked: list[dict[str, str]] = []
+    for model in sorted(by_model):
+        group = by_model[model]
+        unextended = [
+            row
+            for row in group
+            if str(row.get("extend_terminals", "")).strip() in {"0", "false", "no"}
+        ]
+        picked.append(unextended[0] if unextended else group[0])
+    return picked
+
+
+def plot_runtime_scatter(
+    rows: list[dict[str, str]],
+    path: Path,
+    *,
+    x_field: str,
+    xlabel: str,
+) -> None:
+    """Log-log scatter of fit runtime versus ``x_field``, one point per model."""
     import matplotlib.pyplot as plt
 
+    plot_rows = rows_for_runtime_plots(rows)
     points: list[tuple[float, float, str]] = []
-    for row in rows:
-        skeleton_nodes = _float(row.get("skeleton_nodes", ""))
+    for row in plot_rows:
+        x_value = _float(row.get(x_field, ""))
         runtime_s = _float(row.get("runtime_s", ""))
-        if math.isfinite(skeleton_nodes) and math.isfinite(runtime_s) and skeleton_nodes > 0 and runtime_s > 0:
-            points.append((skeleton_nodes, runtime_s, row["model"]))
+        if math.isfinite(x_value) and math.isfinite(runtime_s) and x_value > 0 and runtime_s > 0:
+            points.append((x_value, runtime_s, row["model"]))
     if not points:
-        raise ValueError("No finite runtime and skeleton-node pairs to plot.")
+        raise ValueError(f"No finite runtime and {x_field} pairs to plot.")
 
     figure, axis = plt.subplots(figsize=(7.2, 4.6))
     colors = plt.get_cmap("tab20").colors
-    for index, (skeleton_nodes, runtime_s, name) in enumerate(points):
+    for index, (x_value, runtime_s, name) in enumerate(points):
         axis.scatter(
-            [skeleton_nodes],
+            [x_value],
             [runtime_s],
             s=120,
             color=colors[index % len(colors)],
@@ -306,7 +304,7 @@ def plot_runtime(rows: list[dict[str, str]], path: Path) -> None:
         )
     axis.set_xscale("log")
     axis.set_yscale("log")
-    axis.set_xlabel("Skeleton nodes")
+    axis.set_xlabel(xlabel)
     axis.set_ylabel("Runtime (s)")
     axis.grid(True, which="both", linestyle=":", linewidth=0.6, alpha=0.7)
     axis.legend(
@@ -352,13 +350,27 @@ def main() -> None:
         raise SystemExit(f"Input CSV not found: {input_path}")
     raw_rows = read_rows(input_path)
     filtered = select_best_per_resolution(raw_rows)
-    filtered = select_best_extend_per_demo(filtered)
     rows = summarize(filtered)
     write_rows(output_path, rows)
-    figure_path = output_path.with_name(f"{output_path.stem}_runtime.png")
-    plot_runtime(rows, figure_path)
+    skeleton_figure = output_path.with_name(f"{output_path.stem}_runtime.png")
+    morphology_figure = output_path.with_name(
+        f"{output_path.stem}_runtime_morphology.png"
+    )
+    plot_runtime_scatter(
+        rows,
+        skeleton_figure,
+        x_field="skeleton_nodes",
+        xlabel="Skeleton nodes",
+    )
+    plot_runtime_scatter(
+        rows,
+        morphology_figure,
+        x_field="morphology_nodes",
+        xlabel="Morphology nodes",
+    )
     print(f"Wrote {len(rows)} model rows to {output_path}")
-    print(f"Wrote runtime plot to {figure_path}")
+    print(f"Wrote runtime vs skeleton plot to {skeleton_figure}")
+    print(f"Wrote runtime vs morphology plot to {morphology_figure}")
 
 
 if __name__ == "__main__":

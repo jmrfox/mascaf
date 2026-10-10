@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -1091,3 +1092,52 @@ def test_active_resample_raises_if_snap_fails(unit_sphere, monkeypatch):
     monkeypatch.setattr(opt, "_snap_point_to_chord_midpoint", lambda _p: None)
     with pytest.raises(RuntimeError, match="snapping failed"):
         opt._active_resample_edges()
+
+
+def test_forcing_run_all_iterations_runs_full_count(unit_sphere, caplog):
+    positions = [
+        np.array([-0.5, 0.0, 0.0]),
+        np.array([0.0, 0.0, 0.0]),
+        np.array([0.5, 0.0, 0.0]),
+    ]
+    base_opts = BasisOptimizerOptions(
+        do_pruning=False,
+        do_snapping=False,
+        do_forcing=True,
+        preserve_terminal_nodes=False,
+        max_iterations=5,
+        alpha_s=0.0,
+        step_scale=0.01,
+        convergence_threshold=1.0,
+        centering_error_stop_fraction=0.5,
+        n_rays=6,
+    )
+
+    def _iteration_log_count() -> int:
+        return sum(
+            1
+            for record in caplog.records
+            if record.message.startswith("  Iteration ")
+        )
+
+    caplog.set_level(logging.INFO)
+    caplog.clear()
+    early_graph = _chain_graph(positions)
+    BasisOptimizer(
+        early_graph,
+        unit_sphere,
+        base_opts,
+    )._run_forcing_phase()
+    early_iters = _iteration_log_count()
+
+    caplog.clear()
+    full_graph = _chain_graph(positions)
+    BasisOptimizer(
+        full_graph,
+        unit_sphere,
+        replace(base_opts, forcing_run_all_iterations=True),
+    )._run_forcing_phase()
+    full_iters = _iteration_log_count()
+
+    assert full_iters == 5
+    assert early_iters < 5

@@ -8,6 +8,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- `BasisOptimizerOptions.forcing_run_all_iterations` to run the full forcing loop
+  without early stopping (used by complexity spines at 20 iterations).
+- Two-group complexity protocol: `spine_forcing_20` vs `reference_snap_only`, with
+  `fit_protocol` on sweep CSV rows.
+
+### Changed
+
+- Complexity sweep: spines use prune + snap + exactly 20 forcing iterations and
+  both terminal-extension settings; reference models (cylinder, torus, branching,
+  human) use snap-only basis optimization with fixed TE per model; human at
+  mel/t = 2 only. Demos no longer skip basis optimization.
+- Summarizer no longer picks a single `extend_terminals` row per demo.
+
 ---
 
 ## [1.5.0] — 2026-10-04

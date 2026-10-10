@@ -1,26 +1,18 @@
 """Sweep MASCAF resolution and write a complexity table as CSV.
 
-Fits cylinder, torus, branching, and the toric spines at three
-thickness-relative ``max_edge_length`` values. Each (model, resolution)
-case is fit ``N`` times (default 3) because basis optimization is
-stochastic. Demo geometries (``group=demo``) use notebook ``max_edge_length`` values,
-skip basis optimization, and use a single replicate. Only ``branching`` is
-scored with and without ``extend_terminals()``; other demos use the
-unextended cable only. Summarization keeps the extend setting with lower
-overlap-subtracted volume error for demos.
-Each fit is then scored twice for spines and branching: as fitted, and after
-``extend_terminals()`` with its default length and radius scales.
-Volume and surface-area errors are recorded with and without branch
-overlap corrections. Each cable is then scaled so its total surface area
-matches the mesh, and the post-normalization volume error (no overlap
-subtraction) is recorded. Scaling exponents and downstream summaries use
-the replicate whose overlap-subtracted volume ratio is nearest 1,
-separately for each terminal-extension setting.
+Two fit protocols (``fit_protocol`` column):
 
-Each row records mesh and skeleton size, fit fidelity, wall time, and
-process working-set RAM. After the fits for a model, all rows for that
-model receive a log-log scaling exponent of runtime and peak RAM versus
-morphology node count (from the best replicate at each resolution).
+- **spine_forcing_20** — toric spines: oracle prune + snap + forcing for exactly
+  20 iterations, ``extend_terminals`` on and off, mel/t = 1, 2, 3, 3 replicates.
+- **reference_snap_only** — cylinder, torus, branching, human: oracle prune + snap,
+  no forcing, fixed terminal extension per model (off for cylinder/torus, on for
+  branching and human), one replicate. Demos use notebook ``max_edge_length``;
+  human uses mel/t = 2 only.
+
+Volume and surface-area errors are recorded with and without branch overlap
+corrections. Each variant is also scaled to mesh surface area and volume-checked.
+Scaling exponents use the replicate whose overlap-subtracted volume ratio is
+nearest 1 at each resolution and terminal-extension setting.
 
 Example::
 
@@ -40,12 +32,13 @@ import sys
 import threading
 import time
 from ctypes import wintypes
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
 
 from mascaf import (
+    BasisOptimizerOptions,
     CableFitter,
     FitOptions,
     FitOracleOptions,
@@ -55,6 +48,7 @@ from mascaf import (
     compute_fit_features,
     suggest_fit_parameters,
 )
+from mascaf.fit_oracle import SuggestedFitParameters
 from mascaf.logging_config import configure_logging
 
 logger = logging.getLogger(__name__)
@@ -62,6 +56,13 @@ logger = logging.getLogger(__name__)
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_OUTPUT = _REPO_ROOT / "outputs" / "complexity_analysis.csv"
 _DEMO_NAMES = ("cylinder", "torus", "branching")
+_REFERENCE_EXTEND: dict[str, tuple[int, ...]] = {
+    "cylinder": (0,),
+    "torus": (0,),
+    "branching": (1,),
+    "human": (1,),
+}
+_SPINE_FORCING_ITERATIONS = 20
 # Notebook ``max_edge_length`` values (see ``notebooks/demo_geometries/*_mascaf.py``).
 _DEMO_MAX_EDGE_LENGTH: dict[str, float] = {
     "cylinder": 3.0,
@@ -76,6 +77,7 @@ _SAMPLE_INTERVAL_S = 0.05
 _COLUMNS = (
     "model",
     "group",
+    "fit_protocol",
     "mel_over_thickness",
     "extend_terminals",
     "run_index",
@@ -126,6 +128,10 @@ class ModelSpec:
     group: str
     mesh_path: Path
     skeleton_path: Path
+    complexity_profile: str
+    extend_terminals_variants: tuple[int, ...]
+    mel_over_thickness_values: tuple[float, ...] | None = None
+    prune_short_branches_fraction: float | None = None
 
 
 class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
@@ -249,9 +255,23 @@ def catalog() -> list[ModelSpec]:
             group="demo",
             mesh_path=demo_root / f"{name}.obj",
             skeleton_path=demo_root / f"{name}.polylines.txt",
+            complexity_profile="reference",
+            extend_terminals_variants=_REFERENCE_EXTEND[name],
         )
         for name in _DEMO_NAMES
     ]
+    models.append(
+        ModelSpec(
+            name="human",
+            group="cell",
+            mesh_path=demo_root / "human.obj",
+            skeleton_path=demo_root / "human.polylines.txt",
+            complexity_profile="reference",
+            extend_terminals_variants=_REFERENCE_EXTEND["human"],
+            mel_over_thickness_values=(2.0,),
+            prune_short_branches_fraction=0.2,
+        )
+    )
     for spine_idx in _SPINE_IDS:
         models.append(
             ModelSpec(
@@ -264,6 +284,8 @@ def catalog() -> list[ModelSpec]:
                     / "mcf_skeletons"
                     / f"TS{spine_idx}_qst0.5_mcst5.polylines.txt"
                 ),
+                complexity_profile="spine",
+                extend_terminals_variants=(0, 1),
             )
         )
     return models
@@ -421,11 +443,51 @@ def resolve_max_edge_length(
     return mel, float(k)
 
 
+def fit_protocol_label(profile: str) -> str:
+    if profile == "spine":
+        return "spine_forcing_20"
+    if profile == "reference":
+        return "reference_snap_only"
+    raise ValueError(f"Unknown complexity_profile {profile!r}")
+
+
+def k_values_for_model(
+    model: ModelSpec, cli_k_values: tuple[float, ...]
+) -> tuple[float, ...]:
+    if model.mel_over_thickness_values is not None:
+        return model.mel_over_thickness_values
+    if model.complexity_profile == "spine":
+        return cli_k_values
+    return (cli_k_values[0],)
+
+
+def configure_basis_options(
+    suggested: SuggestedFitParameters,
+    profile: str,
+) -> BasisOptimizerOptions:
+    base = suggested.basis_optimizer_options
+    if profile == "spine":
+        return replace(
+            base,
+            do_snapping=True,
+            do_forcing=True,
+            max_iterations=_SPINE_FORCING_ITERATIONS,
+            forcing_run_all_iterations=True,
+        )
+    if profile == "reference":
+        return replace(
+            base,
+            do_snapping=True,
+            do_forcing=False,
+            forcing_run_all_iterations=False,
+        )
+    raise ValueError(f"Unknown complexity_profile {profile!r}")
+
+
 def effective_n_runs(model: ModelSpec, n_runs: int) -> int:
-    """Demo geometries skip stochastic basis optimization and use one replicate."""
-    if model.group == "demo":
-        return 1
-    return n_runs
+    if model.complexity_profile == "spine":
+        return n_runs
+    return 1
 
 
 def result_variants_for_model(
@@ -435,11 +497,46 @@ def result_variants_for_model(
     n_extended: int,
 ) -> tuple[tuple[int, object, int], ...]:
     """Return (extend_flag, graph, n_tips) rows to score for this model."""
-    if model.group == "demo" and model.name != "branching":
-        return ((0, morphology, 0),)
-    return (
-        (0, morphology, 0),
-        (1, extended, n_extended),
+    variants: list[tuple[int, object, int]] = []
+    for flag in model.extend_terminals_variants:
+        if flag == 0:
+            variants.append((0, morphology, 0))
+        elif flag == 1:
+            variants.append((1, extended, n_extended))
+        else:
+            raise ValueError(
+                f"extend_terminals_variants entry must be 0 or 1, got {flag!r}"
+            )
+    return tuple(variants)
+
+
+def load_skeleton(model: ModelSpec) -> SkeletonGraph:
+    skeleton = SkeletonGraph.from_txt(str(model.skeleton_path))
+    if model.prune_short_branches_fraction is not None:
+        skeleton.prune_short_branches_inplace(
+            min_length_fraction=model.prune_short_branches_fraction
+        )
+    return skeleton
+
+
+def fit_options_for_model(
+    model: ModelSpec,
+    suggested: object,
+    basis_opts: object | None,
+) -> FitOptions:
+    """Build :class:`FitOptions` for a catalog model (human matches cell_fit_figures)."""
+    if model.name == "human":
+        return FitOptions(
+            max_edge_length=suggested.max_edge_length,
+            radius_strategy="equivalent_area",
+            section_probe_eps=1e-4,
+            section_probe_tries=3,
+            multi_tangent_reduction="median",
+            basis_optimizer_options=basis_opts,
+        )
+    return FitOptions(
+        max_edge_length=suggested.max_edge_length,
+        basis_optimizer_options=basis_opts,
     )
 
 
@@ -459,7 +556,7 @@ def fit_model(
 
     logger.info("Loading %s (%s)", model.name, model.group)
     mesh = MeshManager(mesh_path=str(model.mesh_path))
-    skeleton = SkeletonGraph.from_txt(str(model.skeleton_path))
+    skeleton = load_skeleton(model)
     features = compute_fit_features(mesh, skeleton)
     analysis = mesh.analyze_mesh()
     thickness = features.thickness
@@ -469,9 +566,11 @@ def fit_model(
             f"{model.name} has no usable thickness median ({thickness.median})"
         )
 
+    protocol = fit_protocol_label(model.complexity_profile)
     shared = {
         "model": model.name,
         "group": model.group,
+        "fit_protocol": protocol,
         "mesh_vertices": analysis["vertex_count"],
         "mesh_faces": analysis["face_count"],
         "mesh_area": float(mesh.mesh.area),
@@ -488,12 +587,12 @@ def fit_model(
         "skeleton_length": features.skeleton_length,
         "n_terminals": features.n_terminals,
         "n_branches": features.n_branches,
-        "cyclomatic_number": features.cyclomatic_number,
         "runtime_scaling_exponent": "",
         "ram_scaling_exponent": "",
     }
 
-    for k in k_values:
+    model_k_values = k_values_for_model(model, k_values)
+    for k in model_k_values:
         mel, mel_k_report = resolve_max_edge_length(
             model, k, float(thickness.median)
         )
@@ -516,21 +615,15 @@ def fit_model(
             },
         )
         model_runs = effective_n_runs(model, n_runs)
-        basis_opts = (
-            None
-            if model.group == "demo"
-            else suggested.basis_optimizer_options
+        basis_opts = configure_basis_options(suggested, model.complexity_profile)
+        logger.info(
+            "%s: %s — %d replicate(s), extend=%s",
+            model.name,
+            protocol,
+            model_runs,
+            model.extend_terminals_variants,
         )
-        if model.group == "demo":
-            logger.info(
-                "%s: demo geometry — skipping basis optimization, %d replicate",
-                model.name,
-                model_runs,
-            )
-        options = FitOptions(
-            max_edge_length=suggested.max_edge_length,
-            basis_optimizer_options=basis_opts,
-        )
+        options = fit_options_for_model(model, suggested, basis_opts)
         for run_index in range(model_runs):
             logger.info(
                 "Fitting %s at mel/t=%.3g run %d/%d (max_edge_length=%.6g)",
@@ -546,8 +639,12 @@ def fit_model(
                 runtime_s = time.perf_counter() - started
             rss_before = monitor.baseline / (1024 * 1024)
             peak_rss = monitor.peak / (1024 * 1024)
-            extended = copy.deepcopy(morphology)
-            n_extended = extended.extend_terminals()
+            if 1 in model.extend_terminals_variants:
+                extended = copy.deepcopy(morphology)
+                n_extended = extended.extend_terminals()
+            else:
+                extended = morphology
+                n_extended = 0
             variants = result_variants_for_model(
                 model, morphology, extended, n_extended
             )
@@ -590,6 +687,7 @@ def fit_model(
                     "max_edge_length_fraction": float(suggested.max_edge_length_fraction),
                     "morphology_nodes": graph.number_of_nodes(),
                     "morphology_edges": graph.number_of_edges(),
+                    "cyclomatic_number": graph.cyclomatic_number(),
                     "volume_ratio": volume["ratio"],
                     "volume_relative_error": volume["relative_error"],
                     "area_ratio": area["ratio"],
@@ -645,7 +743,7 @@ def parse_args() -> argparse.Namespace:
         "--models",
         default=None,
         help=(
-            "Comma-separated model names (cylinder, torus, branching, TS1, ...). "
+            "Comma-separated model names (cylinder, torus, branching, human, TS1, ...). "
             "Default: all demos and toric spines."
         ),
     )

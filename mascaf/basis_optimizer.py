@@ -70,6 +70,7 @@ class BasisOptimizerOptions:
     do_snapping: bool = True
     do_forcing: bool = False
     max_iterations: int = 10
+    forcing_run_all_iterations: bool = False
     convergence_threshold: float = 1e-4
     preserve_terminal_nodes: bool = True
     preserve_branch_nodes: bool = False
@@ -532,13 +533,19 @@ class BasisOptimizer:
 
             if e0 is None:
                 e0 = centering_error
-                if e0 <= 1e-15:
+                if (
+                    not self.options.forcing_run_all_iterations
+                    and e0 <= 1e-15
+                ):
                     logger.info(
                         "  Converged at iteration %d: initial centering error ~0",
                         iteration,
                     )
                     break
-            elif centering_error < stop_fraction * e0:
+            elif (
+                not self.options.forcing_run_all_iterations
+                and centering_error < stop_fraction * e0
+            ):
                 logger.info(
                     "  Converged at iteration %d: centering error %.6e "
                     "< %.3f * initial %.6e",
@@ -549,7 +556,7 @@ class BasisOptimizer:
                 )
                 break
 
-            if e_prev is not None:
+            if e_prev is not None and not self.options.forcing_run_all_iterations:
                 denom = max(e_prev, 1e-15)
                 rel_change = abs(centering_error - e_prev) / denom
                 if rel_change < plateau_tol:
@@ -585,7 +592,10 @@ class BasisOptimizer:
 
             e_prev = centering_error
 
-            if movement < self.options.convergence_threshold:
+            if (
+                not self.options.forcing_run_all_iterations
+                and movement < self.options.convergence_threshold
+            ):
                 logger.info(
                     "  Converged at iteration %d: avg movement %.6e "
                     "< threshold %.6e",

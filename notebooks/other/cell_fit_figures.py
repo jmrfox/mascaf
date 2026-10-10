@@ -9,7 +9,6 @@
 import logging
 
 from mascaf import *
-from swctools import SWCModel
 
 logging.basicConfig(level=logging.INFO)
 
@@ -22,7 +21,7 @@ demo_dir = f"../../data/demo"
 mm = MeshManager(mesh_path=f"{demo_dir}/{name}.obj")
 raw_skeleton = SkeletonGraph.from_txt(f"{demo_dir}/{name}.polylines.txt")
 # Remove short terminal twigs (fraction = percentile / 100, e.g. 0.2 → 20th percentile).
-raw_skeleton.prune_short_branches_inplace(min_length_fraction=0.2)
+# raw_skeleton.prune_short_branches_inplace(min_length_fraction=0.2)
 skeleton = raw_skeleton
 
 suggested = suggest_fit_parameters(mm, skeleton)
@@ -32,6 +31,7 @@ print(suggested)
 
 basis_optimizer_options = suggested.basis_optimizer_options
 basis_optimizer_options.do_forcing = False
+basis_optimizer_options.do_pruning = False
 
 fit_options = FitOptions(
     max_edge_length=suggested.max_edge_length,
@@ -50,7 +50,9 @@ mesh_fig, camera = visualize_mesh_3d(
     title="",
     orientation="horizontal",
     return_camera=True,
-    eye_scale=1.0,
+    eye_scale=1.3,
+    width=1200,
+    height=800
 )
 mesh_fig.show()
 
@@ -61,6 +63,8 @@ mesh_skel_fig = visualize_mesh_3d(
     title="",
     orientation="horizontal",
     camera=camera,
+    width=1200,
+    height=800
 )
 mesh_skel_fig.show()
 
@@ -80,11 +84,12 @@ cable_fig = visualize_cable_3d(
     model,
     slider=False,
     title="",
-    width=800,
-    height=600,
+    width=1200,
+    height=800,
     show_axes=False,
     orientation="horizontal",
     camera=camera,
+    centroid_line_width=1.0,
 )
 cable_fig.show()
 

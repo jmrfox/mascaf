@@ -262,6 +262,20 @@ class MorphologyGraph(Graph3D):
                 if u != v:
                     graph.add_edge(u, v)
 
+        cycles_before = self.cyclomatic_number()
+        cycles_after = graph.cyclomatic_number()
+        if cycles_after < cycles_before:
+            logger.warning(
+                "Resample at max_edge_length=%.6g dropped %d cycle(s): "
+                "cyclomatic number %d → %d. A cycle is removed when every "
+                "route around it is shorter than the edge limit and collapses "
+                "onto one chord.",
+                float(max_edge_length),
+                cycles_before - cycles_after,
+                cycles_before,
+                cycles_after,
+            )
+
         logger.info(
             "Resampled morphology: %d nodes, %d edges "
             "(max_edge_length=%.4f, source %d nodes / %d edges, %d sections)",
